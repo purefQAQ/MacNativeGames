@@ -11,6 +11,11 @@
 #include <unistd.h>
 #include <math.h>
 
+int runtime_camera_distance_available(void) { return 0; }
+int runtime_camera_distance_cm(void) { return 0; }
+void runtime_camera_distance_set(int cm) { (void)cm; }
+void runtime_vr_find_head(int stage) { (void)stage; }
+
 /* 60 FPS.
    TOTK's adaptive present-interval controller (main+0x8f6bec, called once per frame from main+0x8f68b4) turns the main
    thread's measured frame work time (system object +0x118, written at main+0x8f6a44 just before the present) into a

@@ -68,6 +68,8 @@ python3.14 -m tools.builder --cli --game totk --game-file ~/Games/totk.xci --key
 
 **The first double-click after downloading the ZIP:** macOS blocks a downloaded script it has not opened before. Open **System Settings › Privacy & Security** and click **Open Anyway** for `Build Game.command`, or run `xattr -d com.apple.quarantine "Build Game.command"` in this folder once. A `git clone` is not affected. The builder never removes the quarantine itself.
 
+**Quick rebuild for Tears of the Kingdom:** double-click **Build Tears of the Kingdom.command**. It looks in the folder above the repository for `SourceData`, `NS Key/prod.keys`, and a `Firmware*` folder, then rebuilds the app there using the current repository code. If it finds multiple updates it asks which one to use; if none is present it asks whether to build the base game only. Edit the script's defaults or set `GAME_FILES_ROOT`, `BASE_GAME`, `UPDATE_GAME`, `KEYS_FILE`, `FIRMWARE_DIR`, and `OUTPUT_APP` to use different paths.
+
 How the builder is made, for anyone changing it (people or AI assistants): [builder.md](builder.md).
 
 ## Build the app

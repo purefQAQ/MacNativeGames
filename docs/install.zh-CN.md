@@ -67,6 +67,8 @@ python3.14 -m tools.builder --cli --game totk --game-file ~/Games/totk.xci --key
 
 **下载 ZIP 后第一次双击**：macOS 会拦下没打开过的下载脚本。在**系统设置 › 隐私与安全性**里对 `Build Game.command` 点**仍要打开**，或在这个文件夹里运行一次 `xattr -d com.apple.quarantine "Build Game.command"`。用 `git clone` 下载的不受影响。
 
+**只想重打王国之泪**：双击仓库里的 **Build Tears of the Kingdom.command**，会自动在仓库上一级的 `SourceData`、`NS Key/prod.keys` 和 `Firmware*` 文件夹里找本体、更新、密钥和固件，然后用当前仓库代码重建到上一级的 `Tears of the Kingdom.app`。若有多个更新包会让你选择；若没有更新则会询问是否只打本体。其他文件位置可在脚本开头修改，或设置 `GAME_FILES_ROOT`、`BASE_GAME`、`UPDATE_GAME`、`KEYS_FILE`、`FIRMWARE_DIR`、`OUTPUT_APP` 环境变量。
+
 ## 打包 App
 
 **1. 装工具**（只需一次，要联网）：
