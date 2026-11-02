@@ -69,6 +69,8 @@ python3.14 -m tools.builder --cli --game totk --game-file ~/Games/totk.xci --key
 
 **只想重打王国之泪**：双击仓库里的 **Build Tears of the Kingdom.command**，会自动在仓库上一级的 `SourceData`、`NS Key/prod.keys` 和 `Firmware*` 文件夹里找本体、更新、密钥和固件，然后用当前仓库代码重建到上一级的 `Tears of the Kingdom.app`。若有多个更新包会让你选择；若没有更新则会询问是否只打本体。其他文件位置可在脚本开头修改，或设置 `GAME_FILES_ROOT`、`BASE_GAME`、`UPDATE_GAME`、`KEYS_FILE`、`FIRMWARE_DIR`、`OUTPUT_APP` 环境变量。
 
+**只想重打旷野之息**：双击 **Build Breath of the Wild.command**。默认查找仓库上一级 `SourceData` 中带有标题 ID `01007EF00011E000` 的本体，并复用王国之泪 `TOTK_build` 提取出的六个系统字体；适用于 1.6.0 合并卡带 XCI，也会把结果放到游戏文件旁边。若输入是 NSP 或文件位置不同，请编辑脚本开头的默认路径，或设置 `GAME_FILES_ROOT`、`BASE_GAME`、`KEYS_FILE`、`SHARED_FONTS`、`OUTPUT_APP` 环境变量。独立 NSP 更新/DLC 不会自动附加。
+
 ## 打包 App
 
 **1. 装工具**（只需一次，要联网）：

@@ -16,6 +16,13 @@
 #include "botw_shadow_res.h"   /* 1.9.0's sun shadow map at 2048 (TOTK_SHADOW_RES, shadows.txt) */
 #include <TargetConditionals.h>
 uint32_t runtime_thread_current_handle(void);
+
+int runtime_aspect_vr(float aspect, float vertical_factor) { (void)aspect; (void)vertical_factor; return 0; }
+int runtime_camera_distance_available(void) { return 0; }
+int runtime_camera_distance_cm(void) { return 0; }
+void runtime_camera_distance_set(int cm) { (void)cm; }
+void runtime_vr_find_head(int stage) { (void)stage; }
+
 static void botw_aspect_install(Module *m);   /* the aspect ratio, end of the file */
 static int patch_output_res(Module *m);   /* native output size, after runtime_output_res */
 static void botw_output_tick(void);       /* the size static follows the canvas after the start */
