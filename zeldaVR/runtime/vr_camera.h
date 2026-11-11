@@ -32,7 +32,10 @@ typedef struct {
     float fp_blend;   /* 1112: how far the camera is at the eyes, 0..1 (user 2026-11-01: "p键 切换 第一 第三人称的时候 要 平滑 过度
                          0.6秒"): the hook takes the third-person camera's translation plus this share of the way to the eyes'
                          (both have the same rotation); the VR thread eases it over 0.6 s at a switch, 1 while first person */
-    uint32_t pad2;
+    float eye_half;   /* 1116: stereo by alternating eyes (B1, user 2026-11-02: "开始 b1"): half the headset's IPD in metres;
+                         each camera update moves the eye along the final camera's right axis, the left eye on odd calls
+                         and the right one on even calls (t0 -= -e / +e), so a ring entry's index parity names its eye;
+                         0: one eye, as before */
     float fp_up[4];   /* 1120: (0, eye height, 0, 0) */
     float fp_fwd;     /* 1136 */
     float cam_back;   /* 1140: third person: the camera this many metres further back along its view (user 2026-10-26:
@@ -58,7 +61,25 @@ typedef struct {
     uint32_t v0n;        /* 1200: v0ring entries written (by the veneer) */
     uint32_t vs_changes; /* 1204: times the replay changed main_vs (diagnostic) */
     uint64_t pad3;       /* 1208 */
-    struct { uint64_t vs; uint64_t pad; float m[12]; } v0ring[32];   /* 1216: the last view 0 settings, by v0n & 31 */
+    struct { uint64_t vs; uint64_t camera; float m[12]; } v0ring[32];   /* 1216: the actual view-set input owner and matrix */
+    /* TotK's main camera, after levelling and before head rotation. Published
+       by its actual owner, independently of pose-ring matching. */
+    float base_view[12]; /* 3264 */
+    uint32_t base_sequence; /* 3312: odd while the camera hook writes */
+    uint64_t native_writer; /* 3320: last native writer, diagnostic only; not an owner selector */
 } vr_cam_state;
 
 extern vr_cam_state *g_vr_headlook;   /* defined in totk_vr.m; set by the hook's install, NULL without it (other versions, iOS, VR off) */
+void vr_camera_control_read(vr_cam_state *out); /* Coherent host-side control snapshot; no pose-ring inference. */
+
+/* Optional runtime hooks: Tears of the Kingdom 1.4.3 and Breath of the Wild
+   provide camera distance on the Mac; runtime_aspect_vr is shared by the TotK
+   versions. Builds without each feature link its weak default in vr_defaults.c. */
+int runtime_aspect_vr(float a, float k);            /* the game renders ratio a, Vert+ factor k; 0 without the Vert+ stubs */
+int runtime_camera_distance_available(void);        /* 1 while the camera hook is installed */
+int runtime_camera_distance_cm(void);               /* the third-person camera distance (cm, negative is closer) */
+void runtime_camera_distance_set(int cm);
+void runtime_vr_find_head(int stage);               /* diagnostic: bone matrices near the player's head */
+
+int runtime_vr_base_view(float out[12]); /* Exact native source owner; base before our head rotation. */
+int runtime_vr_camera_owned(uint64_t camera,uint64_t projection); /* Real native controller -> holder -> input relation. */
