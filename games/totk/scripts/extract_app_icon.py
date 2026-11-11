@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The app icon from the game's own control data: the control NCA in the XCI or NSP carries
 icon_<language>.dat (a 256x256 JPEG); it becomes build/AppIcon.icns (sips and iconutil, both part of macOS).
-usage: extract_app_icon.py <game.xci|game.nsp> --keys <prod.keys> [--title 0100f2c0115b6000] [--output build/AppIcon.icns]"""
+usage: extract_app_icon.py <game.xci|game.nsp> --keys <prod.keys> [--title 0100f2c0115b6000] [--output build/AppIcon.icns]
+       extract_app_icon.py --image <icon.png|icon.jpg> [--output build/AppIcon.icns]"""
 import argparse
 import hashlib
 import json
@@ -73,9 +74,16 @@ def main():
     ap.add_argument('game', type=Path, nargs='?')
     ap.add_argument('--keys', type=Path)
     ap.add_argument('--source-spec', type=Path, help='pinned official image metadata for a dump without Control data')
+    ap.add_argument('--image', type=Path, help='local PNG or JPEG to convert to an app icon')
     ap.add_argument('--title', default='0100f2c0115b6000')
     ap.add_argument('--output', type=Path, default=Path('build/AppIcon.icns'))
     a = ap.parse_args()
+    if a.image:
+        if not a.image.is_file():
+            ap.error(f'image does not exist: {a.image}')
+        write_icon(a.image, a.output)
+        print(a.output)
+        return
     if a.source_spec:
         source_icon(a.source_spec, a.output)
         print(a.output)

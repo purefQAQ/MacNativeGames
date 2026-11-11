@@ -2226,14 +2226,23 @@ def main_ns2(args, dump):
         copy_shared_fonts(shared_fonts, fonts)
     validate_fonts(fonts)
     step_code_ns2(tree, dump, g, env, logs)
+    if args.app_icon:
+        if args.platform != 'macos':
+            raise BuildError('--app-icon is only supported when building a macOS app')
+        app_icon = args.app_icon.expanduser().resolve()
+        if not app_icon.is_file():
+            raise BuildError(f'app icon image not found: {app_icon}')
+        run([py, 'scripts/extract_app_icon.py', '--image', app_icon, '--output', 'build/AppIcon.icns'],
+            logs / 'app_icon.log', cwd=tree, env=env)
+    else:
+        icon_spec = g['folder'] / 'assets/app-icon.json'
+        if icon_spec.is_file():
+            run([py, 'scripts/extract_app_icon.py', '--source-spec', icon_spec, '--output', 'build/AppIcon.icns'],
+                logs / 'app_icon.log', cwd=tree, env=env)
     if v == 'dkb':
         for size in ('2560x1440', '3840x2160'):
             run([py, 'scripts/make_output_res_overlay.py', size, '--version', v],
                 logs / f'output_res_overlay-{v}-{size}.log', cwd=tree, env=env)
-    icon_spec = g['folder'] / 'assets/app-icon.json'
-    if icon_spec.is_file():
-        run([py, 'scripts/extract_app_icon.py', '--source-spec', icon_spec, '--output', 'build/AppIcon.icns'],
-            logs / 'app_icon.log', cwd=tree, env=env)
     say('2/4 data and 4/4 binary: building the game binary, its tables and the launcher')
     step_binary(tree, None, None, {**env, 'SHADER_LIST': f'../{g["folder"].name}/assets/shader_list.tsv'}, logs, version=v)
     step_shaders_ns2(tree, g, logs)
@@ -2601,6 +2610,7 @@ def parse_args(argv):
     ap.add_argument('-k', '--keys', type=Path, help='your prod.keys (an XCI or NSP; a Switch 2 dump folder needs none)')
     ap.add_argument('-o', '--out', type=Path, help=f'the app or IPA to write (default depends on --platform; next to the game file)')
     ap.add_argument('--work', type=Path, help='work folder (default: TOTK_build next to the game file)')
+    ap.add_argument('--app-icon', type=Path, help='PNG or JPEG image to package as the macOS app icon (Switch 2 dump folders)')
     ap.add_argument('--mod', type=Path, metavar='FOLDER',
                     help='a mod folder prepared before the build: its exefs/ IPS / IPS32 / pchtxt patches for the main '
                          'module are merged into the code before it is rewritten (its romfs/ goes in with '
@@ -2632,6 +2642,8 @@ def main(argv):
     args = parse_args(argv)
     if args.game.expanduser().is_dir():   # a Switch 2 dump folder
         return main_ns2(args, args.game.expanduser().resolve())
+    if args.app_icon:
+        raise BuildError('--app-icon is only supported for Switch 2 dump folders')
     if not args.keys:
         raise BuildError('-k / --keys <your prod.keys> is needed for an XCI or NSP')
     device_app = args.platform in ('ios', 'visionos')
