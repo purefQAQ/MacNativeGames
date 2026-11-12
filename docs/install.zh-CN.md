@@ -73,7 +73,7 @@ python3.14 -m tools.builder --cli --game totk --game-file ~/Games/totk.xci --key
 
 **只想重打王国之泪**：双击仓库里的 **Build Tears of the Kingdom.command**，会自动在仓库上一级的 `SourceData`、`NS Key/prod.keys` 和 `Firmware*` 文件夹里找本体、更新、密钥和固件，然后用当前仓库代码重建到上一级的 `Tears of the Kingdom.app`。固件不是必需项：XCI 自带系统字体，或者工作目录已有有效字体缓存时可以不提供；没有字体缓存的 NSP 仍需要固件或手动指定 `--shared-fonts`。支持的更新是 1.2.1 和 1.4.3。若有多个更新包会让你选择；若没有更新则会询问是否只打本体。其他文件位置可在脚本开头修改，或设置 `GAME_FILES_ROOT`、`BASE_GAME`、`UPDATE_GAME`、`KEYS_FILE`、`FIRMWARE_DIR`、`OUTPUT_APP` 环境变量。
 
-**只想重打旷野之息**：双击 **Build Breath of the Wild.command**。默认查找仓库上一级 `SourceData` 中带有标题 ID `01007EF00011E000` 的本体，并复用王国之泪 `TOTK_build` 提取出的六个系统字体；适用于 1.6.0 合并卡带 XCI。若本体是 NSP，脚本会查找标题 ID `01007EF00011E800` 的更新包；支持的更新为 1.6.0 或 1.9.0，也可用 `UPDATE_GAME` 指定。结果放在游戏文件旁边。若文件位置不同，请编辑脚本开头的默认路径，或设置 `GAME_FILES_ROOT`、`BASE_GAME`、`UPDATE_GAME`、`KEYS_FILE`、`SHARED_FONTS`、`OUTPUT_APP` 环境变量。独立 DLC 不会自动附加。
+**只想重打旷野之息**：双击 **Build Breath of the Wild.command**。默认查找仓库上一级 `SourceData` 中带有标题 ID `01007EF00011E000` 的本体，并复用王国之泪 `TOTK_build` 提取出的六个系统字体；适用于 1.6.0 合并卡带 XCI。若本体是 NSP，脚本会查找标题 ID `01007EF00011E800` 的更新包；支持的更新为 1.6.0 或 1.9.0，也可用 `UPDATE_GAME` 指定。App 默认放在仓库上一级，与王国之泪 App 并排。若文件位置不同，请编辑脚本开头的默认路径，或设置 `GAME_FILES_ROOT`、`BASE_GAME`、`UPDATE_GAME`、`KEYS_FILE`、`SHARED_FONTS`、`OUTPUT_APP` 环境变量。独立 DLC 不会自动附加。
 
 ## 打包 App
 

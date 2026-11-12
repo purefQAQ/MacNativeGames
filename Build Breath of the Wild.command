@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 GAME_FILES_ROOT="${GAME_FILES_ROOT:-$(dirname "$REPO_ROOT")}"
 KEYS_FILE="${KEYS_FILE:-$GAME_FILES_ROOT/NS Key/prod.keys}"
 SHARED_FONTS="${SHARED_FONTS:-$GAME_FILES_ROOT/SourceData/The Legend of Zelda Tears of the Kingdom/TOTK_build/totk/extracted/firmware/shared-fonts}"
-OUTPUT_APP="${OUTPUT_APP:-}"
+OUTPUT_APP="${OUTPUT_APP:-$GAME_FILES_ROOT/Breath of the Wild.app}"
 PYTHON="${PYTHON:-}"
 BASE_GAME="${BASE_GAME:-}"
 UPDATE_GAME="${UPDATE_GAME:-}"
@@ -154,9 +154,6 @@ if ! has_shared_fonts "$SHARED_FONTS"; then
     pause_and_exit
 fi
 
-if [ -z "$OUTPUT_APP" ]; then
-    OUTPUT_APP="$(dirname "$BASE_GAME")/Breath of the Wild.app"
-fi
 mkdir -p "$LOG_DIR" || pause_and_exit
 log_file="$LOG_DIR/MacNativeGames-build-botw-$(date '+%Y%m%d-%H%M%S').log"
 build_args=("$BASE_GAME" -k "$KEYS_FILE" --shared-fonts "$SHARED_FONTS" -o "$OUTPUT_APP")
