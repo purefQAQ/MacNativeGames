@@ -5,6 +5,10 @@
 #include "autoload.h"
 #include "world_survey.h"
 #include "keyboard_map.h"
+#include "input_prompts.h"
+/* Input-only probes do not link the platform renderer. */
+extern void runtime_prompt_keyboard(const KeyMap *) __attribute__((weak_import));
+extern void runtime_prompt_note_input(PromptDevice) __attribute__((weak_import));
 #include "../zeldaVR/gfx/vr_labo.h"
 #include <stdbool.h>
 #include <stdio.h>
@@ -29,10 +33,11 @@ static KeyMap keyMap;static int keyMapLoaded;
 static unsigned char held[KEYMAP_INPUTS];static KeyMapOutput heldOut;
 static void keymap_load_locked(void){
  if(keyMapLoaded)return;keyMapLoaded=1;keymap_default(&keyMap);
- char text[8192];if(!runtime_setting_word("keyboard.txt",text,sizeof text)){fprintf(stderr,"[totk-input] keyboard layout: default\n");return;}
+ char text[8192];if(!runtime_setting_word("keyboard.txt",text,sizeof text)){fprintf(stderr,"[totk-input] keyboard layout: default\n");if(runtime_prompt_keyboard)runtime_prompt_keyboard(&keyMap);return;}
  const char *error=NULL;int line=keymap_parse(text,&keyMap,&error);
  if(line)fprintf(stderr,"[totk-input] keyboard.txt line %d: %s; using the default keyboard layout\n",line,error);
  else fprintf(stderr,"[totk-input] keyboard layout: keyboard.txt\n");
+ if(runtime_prompt_keyboard)runtime_prompt_keyboard(&keyMap);
 }
 /* The Switch buttons the held keys drive, for runtime_keyboard_buttons, which takes no lock (the mouse ticks under the
    gamepad's lock, which is taken inside inputLock): the script keys' fixed layout and the player's (after PR #1210). */
@@ -47,11 +52,13 @@ void runtime_keymap_set(const KeyMap *map){
  char text[8192];int n=keymap_format(map,text,sizeof text);
  pthread_mutex_lock(&inputLock);keyMapLoaded=1;keyMap=*map;held_changed_locked();pthread_mutex_unlock(&inputLock);
  if(n>0)runtime_setting_save("keyboard.txt",text,"keyboard layout");
+ if(runtime_prompt_keyboard)runtime_prompt_keyboard(map);
 }
 void runtime_keymap_reset(void){
  KeyMap map;keymap_default(&map);
  pthread_mutex_lock(&inputLock);keyMapLoaded=1;keyMap=map;held_changed_locked();pthread_mutex_unlock(&inputLock);
  runtime_setting_remove("keyboard.txt");fprintf(stderr,"[totk-input] keyboard layout: default (reset)\n");
+ if(runtime_prompt_keyboard)runtime_prompt_keyboard(&map);
 }
 /* Real user input (a window key, a controller button, a stick pushed past half) stops TOTK_AUTOLOAD and is logged at most
    once a minute. In an agent's test session (TOTK_SLOT_OWNER other than user) the line says the user is playing it: its
@@ -61,7 +68,11 @@ void runtime_keymap_reset(void){
    the game, so typing elsewhere while a test window pops up neither plays it nor stops TOTK_AUTOLOAD (2026-10-31: two
    survey runs sat at the title after a stray key cancelled the auto-load). Scripted input still drives it. */
 static int ignore_user(void){static int v=-1;if(v<0){const char *e=getenv("TOTK_IGNORE_USER_INPUT");v=e&&atoi(e);if(v)fprintf(stderr,"[input] TOTK_IGNORE_USER_INPUT: keyboard, mouse and controllers ignored (scripted input only)\n");}return v;}
+/* runtime/game_slot.c: an agent's test game closes itself after a while with neither an input-file command nor real user
+   input (agent_slot_limit.h). This default answers where game_slot.c is not linked (input probes, iOS). */
+__attribute__((weak)) void runtime_slot_activity(int user){(void)user;}
 static void user_input(const char *what){
+ runtime_slot_activity(1);
  runtime_survey_cancel_user();
  runtime_autoload_user_input();
  static _Atomic uint64_t last;uint64_t now=runtime_now_ns(),prev=atomic_load(&last);
@@ -85,21 +96,35 @@ static void vr_view_key(void){if(!vr_on()||!vr_first_person||!vr_set_first_perso
 /* O (Mac key code 31) recentres VR (user 2026-11-01: "添加一个键 o把 摆正 重置 vr 镜头"): straight ahead becomes where the head
    looks now and the head's position starts from here, as both stick clicks do (gfx/nvn/totk_vr.m vr_recenter). */
 static void vr_recenter_key(void){if(vr_on()&&vr_recenter){vr_recenter();fprintf(stderr,"[totk-input] O: VR recentred\n");}}
+/* The screenshot action (keyboard_map.h KEYMAP_SCREENSHOT, P by default; user 2026-11-11): a press of one of its inputs takes
+   the capture button's picture (gamepad.m runtime_capture_press -> screenshot.h). Its inputs drive nothing in the game
+   (keymap_apply). With VR on, P and O keep their VR use above and take no picture. */
+static int screenshot_input_locked(int input){return keymap_action_of(&keyMap,input,NULL)==KEYMAP_SCREENSHOT;}
+static void screenshot_input(int input){
+ if(input==KEY_VR_VIEW||input==KEY_VR_RECENTER){if(vr_on())return;}
+ const char *name=keymap_input_name(input);fprintf(stderr,"[totk-input] screenshot: %s\n",name?name:"?");
+ if(runtime_capture_press)runtime_capture_press();
+}
 void runtime_input_key_synthetic(unsigned code,int down){if(code>=128)return;pthread_mutex_lock(&inputLock);int press=down&&!keys[code];if(down&&!keys[code])pending|=button(code);keys[code]=(unsigned char)!!down;held_buttons_locked();pthread_mutex_unlock(&inputLock);
  if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
  if(press&&code==KEY_VR_VIEW)vr_view_key();
  if(press&&code==KEY_VR_RECENTER)vr_recenter_key();}
 void runtime_input_key(unsigned code,int down){
  if(code>=128||ignore_user())return;if(down)user_input("keyboard");
- pthread_mutex_lock(&inputLock);int press=down&&!held[code];held[code]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
+ if(down&&runtime_prompt_note_input)runtime_prompt_note_input(PROMPT_KEYBOARD);
+ pthread_mutex_lock(&inputLock);int press=down&&!held[code];held[code]=(unsigned char)!!down;held_changed_locked();int shot=press&&screenshot_input_locked((int)code);pthread_mutex_unlock(&inputLock);
  if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
  if(press&&code==KEY_VR_VIEW)vr_view_key();
  if(press&&code==KEY_VR_RECENTER)vr_recenter_key();
+ if(shot)screenshot_input((int)code);
 }
 /* A mouse button in mouse mode (runtime/gamepad.m: 0 left, 1 right, 2 middle, 3 and 4 the side buttons). */
 void runtime_input_mouse(int button,int down){
  if(button<0||button>=KEYMAP_MOUSE_BUTTONS||ignore_user())return;if(down)user_input("mouse");
- pthread_mutex_lock(&inputLock);held[KEYMAP_MOUSE_FIRST+button]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
+ if(down&&runtime_prompt_note_input)runtime_prompt_note_input(PROMPT_KEYBOARD);
+ pthread_mutex_lock(&inputLock);int press=down&&!held[KEYMAP_MOUSE_FIRST+button];held[KEYMAP_MOUSE_FIRST+button]=(unsigned char)!!down;held_changed_locked();
+ int shot=press&&screenshot_input_locked(KEYMAP_MOUSE_FIRST+button);pthread_mutex_unlock(&inputLock);
+ if(shot)screenshot_input(KEYMAP_MOUSE_FIRST+button);
 }
 void runtime_input_clear_window(void){pthread_mutex_lock(&inputLock);memset(keys,0,sizeof(keys));memset(held,0,sizeof held);heldOut=(KeyMapOutput){0};pending=0;held_buttons_locked();pthread_mutex_unlock(&inputLock);}
 void runtime_input_clear(void){runtime_input_clear_window();runtime_gamepad_clear();}
@@ -269,9 +294,13 @@ static void *input_file(void *arg) {
             }
             continue;
         }
+        runtime_slot_activity(0);   /* any command keeps an agent's game open (a line the reader refuses ends the game) */
         if (runtime_survey_command(line)) continue;
         unsigned code, ms; int used = 0;
-        if (sscanf(line, "down %u %n", &code, &used) == 1 && used && !line[used] && code < 128) {
+        int page;
+        if (sscanf(line, "settings %d %n", &page, &used) == 1 && used && !line[used]) {   /* "settings <page>": the panel on that page, -1 closed (tests) */
+            fprintf(stderr, "[totk-input] file: settings page %d\n", page); runtime_settings_page(page);
+        } else if (sscanf(line, "down %u %n", &code, &used) == 1 && used && !line[used] && code < 128) {
             fprintf(stderr,"[totk-input] file: key %u down\n",code);runtime_input_key_synthetic(code,1);
         } else if (sscanf(line, "up %u %n", &code, &used) == 1 && used && !line[used] && code < 128) {
             fprintf(stderr,"[totk-input] file: key %u up\n",code);runtime_input_key_synthetic(code,0);
@@ -314,6 +343,8 @@ static void *input_file(void *arg) {
         } else if (!strncmp(line, "shot ", 5)) {
             line[strcspn(line, "\r\n")] = 0; if (!line[5]) runtime_fail("diagnostic screenshot path");
             dm_gfx_shot_at(2, line + 5);
+        } else if (!strncmp(line, "capture", 7) && (!line[7] || line[7] == '\n' || line[7] == '\r')) {   /* "capture": the capture button once (screenshot.h; screenshot sharing tests) */
+            if (runtime_capture_press) runtime_capture_press();
         } else if (!strncmp(line, "wshot ", 6)) {   /* "wshot <path>": the next shown picture as the window shows it (FPS box and the bottom-left box included) */
             line[strcspn(line, "\r\n")] = 0; if (!line[6]) runtime_fail("diagnostic window screenshot path");
             extern void dm_gfx_window_shot(const char *path); dm_gfx_window_shot(line + 6);
@@ -386,23 +417,6 @@ static void *input_file(void *arg) {
             char *e; uint64_t o = strtoull(line + 7, &e, 16); char *e2; long r = strtol(e, &e2, 10);
             if (e2 != e) { char *e3; uint64_t lo = strtoull(e2, &e3, 16); runtime_diag_bp_regs_if(o, (int)r, lo, strtoull(e3, NULL, 16)); }   /* "bpregs <off> <reg> <lo> <hi>": only when x<reg> is in [lo, hi) */
             else runtime_diag_bp_regs(o);
-        } else if (!strncmp(line, "b2pair", 6)) {   /* "b2pair": first / second run recordings paired by identity (stereo B2 diagnostic) */
-            extern void runtime_vr_b2_pair(void);
-            runtime_vr_b2_pair();
-        } else if (!strncmp(line, "b2slots", 7)) {   /* "b2slots": where the game keeps the runs' handles (stereo B2 diagnostic) */
-            extern void runtime_vr_b2_slots(void);
-            runtime_vr_b2_slots();
-        } else if (!strncmp(line, "b2calls", 7)) {   /* "b2calls": the next frame's calls of the runs' recordings (stereo B2 diagnostic) */
-            extern void runtime_vr_b2_calls(void);
-            runtime_vr_b2_calls();
-        } else if (!strncmp(line, "b2eye ", 6)) {   /* "b2eye <mm>": half the eye distance for stereo B2 (diagnostic until the VR thread sets it) */
-            extern void runtime_vr_b2_eye(float mm);
-            runtime_vr_b2_eye((float)atof(line + 6));
-        } else if (!strncmp(line, "b2 ", 3)) {   /* "b2 <0|1|2|3> [mask]": zeldaVR stereo B2, the second render run per game update (game_patches_v143.c) */
-            extern void runtime_vr_b2(int on);
-            extern void runtime_vr_b2_mask(unsigned m);
-            char *e; long mode = strtol(line + 3, &e, 10); if (*e == ' ') runtime_vr_b2_mask((unsigned)strtoul(e, NULL, 0));
-            runtime_vr_b2((int)mode);
         } else if (!strncmp(line, "dumpmain ", 9)) {   /* "dumpmain <file>": main's loaded image, relocated (VR stereo RE) */
             extern void runtime_diag_dump_main(const char *path);
             char path[1024]; snprintf(path, sizeof path, "%s", line + 9); path[strcspn(path, "\r\n")] = 0;

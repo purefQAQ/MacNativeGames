@@ -5,7 +5,7 @@ action it writes there, accepts one or two Mac keys; an action it does not list 
 runtime's default binding (games/totk/runtime/keyboard_map.h, keymap_default). The builder's
 keyboard test needs the same binding table the test result is compared with, so this module
 mirrors that default table and parses the file the same way the runtime does: comments, ``none``
-for an empty slot, one input driving at most one action (the later line wins), and a bad line
+for an empty slot, conflicting explicit inputs rejected, and a bad line
 leaving the whole file ignored with the problem reported.
 
 Like the other pure builder models (settings.py, paths.py, checks.py) this module has no Tk and no
@@ -17,12 +17,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-# The 24 actions, in the order the runtime's header lists them (games/totk/runtime/keyboard_map.h).
+# The 25 actions, in the order the runtime's header lists them (games/totk/runtime/keyboard_map.h); the last, the
+# screenshot, is no Switch button (P takes a picture of the game).
 ACTIONS = (
     'a', 'b', 'x', 'y', 'lstick', 'rstick', 'l', 'r', 'zl', 'zr', 'plus', 'minus',
     'left', 'up', 'right', 'down',
     'move_up', 'move_down', 'move_left', 'move_right',
     'camera_up', 'camera_down', 'camera_left', 'camera_right',
+    'screenshot',
 )
 
 # What the pad calls each action, for the "this key is bound to ..." line. The names are the ones
@@ -35,6 +37,7 @@ TITLES = {
     'move_up': 'Move up', 'move_down': 'Move down', 'move_left': 'Move left',
     'move_right': 'Move right', 'camera_up': 'Camera up', 'camera_down': 'Camera down',
     'camera_left': 'Camera left', 'camera_right': 'Camera right',
+    'screenshot': 'Screenshot',
 }
 
 # Every input name keyboard.txt accepts, with what a person calls it. A key event maps into this
@@ -73,6 +76,7 @@ DEFAULT = {
     'move_up': ('w',), 'move_down': ('s',), 'move_left': ('a',), 'move_right': ('d',),
     'camera_up': ('arrow_up',), 'camera_down': ('arrow_down',),
     'camera_left': ('arrow_left',), 'camera_right': ('arrow_right',),
+    'screenshot': ('p',),
 }
 
 # Tk reports X11 keysyms; these are the ones keyboard.txt names. A key Tk spells differently under
@@ -150,7 +154,7 @@ def default_layout(source: Path | None = None) -> Layout:
 def parse_layout(text: str, source: Path | None = None) -> Layout:
     """Read the file the way the runtime does: a bad line ignores the whole file."""
     bindings = {action: list(DEFAULT[action]) for action in ACTIONS}
-    order = []          # the actions a line bound, in file order: the later line wins an input
+    order = []
     problems = []
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.split('#', 1)[0].strip()
@@ -163,6 +167,9 @@ def parse_layout(text: str, source: Path | None = None) -> Layout:
             continue
         if action not in ACTIONS:
             problems.append(f'line {number}: unknown action "{action}"')
+            continue
+        if action in order:
+            problems.append(f'line {number}: this action has a line already')
             continue
         names = rest.split()
         if not names:
@@ -182,14 +189,17 @@ def parse_layout(text: str, source: Path | None = None) -> Layout:
             if lowered not in INPUTS:
                 problems.append(f'line {number}: unknown input "{name}"')
                 break
+            if lowered == '1' or lowered in bound or any(lowered in bindings[a] for a in order):
+                problems.append(f'line {number}: reserved or duplicate input "{name}"')
+                break
             bound.append(lowered)
         else:
             bindings[action] = bound
             order.append(action)
     if problems:
         return Layout({action: DEFAULT[action] for action in ACTIONS}, tuple(problems), source)
-    # An input drives at most one action: the file's later binding takes it from the earlier ones and
-    # from the defaults the file did not mention.
+    # Explicit bindings take their inputs away from omitted defaults. Conflicts
+    # between explicit lines were rejected above, exactly as keymap_parse does.
     taken = {}
     for action in order:
         for name in bindings[action]:

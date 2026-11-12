@@ -4,6 +4,8 @@
 
 本页只讲一件事：用**你自己的**游戏文件，在 Mac、iPhone 或 iPad 上打包出 App。一次打包 20–40 分钟，大部分时间是等待。操作与设置见 [controls.zh-CN.md](controls.zh-CN.md)，测过什么见 [test-records.zh-CN.md](test-records.zh-CN.md)。AI 助理：同样的步骤写成了清单，在[安装 skill](../.claude/skills/install-zelda/SKILL.md) 里。
 
+**时之笛**（Switch 2）有自己的安装页：[games/oot/docs/install.zh-CN.md](../games/oot/docs/install.zh-CN.md)。
+
 目录：[需要准备](#需要准备) · [打包 App](#打包-app) · [旷野之息](#旷野之息) · [iPhone 和 iPad](#iphone-和-ipad) · [Apple Vision Pro](#apple-vision-pro) · [更新 App](#更新-app) · [打包报错](#打包报错) · [文件位置](#文件位置) · [已知问题](#已知问题)
 
 基本规则：
@@ -48,6 +50,8 @@
 工作目录默认建在游戏文件旁边（`TOTK_build`；旷野之息是 `BotW_build`）。工作目录和 App 放在**同一个 APFS 卷**上：17 GB 的游戏数据是克隆过去的，不额外占空间。游戏文件在 exFAT / FAT 盘或快满的盘上时，用 `--work <文件夹>` 和 `-o <App>` 放到有空间的 APFS 盘上。
 
 ## 用窗口打包
+
+**新：拖放打包器。** 运行 `python3 tools/builder_app/make_app.py`，生成 `~/Applications/MacNativeGames Builder.app`（自带 Python）：第一步拖入游戏，第二步选择 `prod.keys`，第三步点**打包并游玩**，全程显示进度。目前打所有游戏的 Mac 包；细节见 [builder-app.md](builder-app.md)。下面的旧窗口保留 Mods、按键和存档几页。
 
 不想敲命令的话：装好下面第 1 步的工具（窗口还要 `brew install python-tk@3.14`），在这个文件夹里双击 **Build Game.command**（或运行 `python3.14 -m tools.builder`），会打开一个窗口（界面是英文的，下面按钮名照原样写）：
 
@@ -201,10 +205,29 @@ python3.14 games/totk/ios/tools/install_device.py "<文件夹>/TOTK-Vision.app" 
 
 ## 更新 App
 
+用哪种更新，固定按这个顺序（先退出游戏）。一律先跑极速更新，它会告诉你要不要用下一种。
+
+| 更新 | 什么时候 | 命令 | 需要 |
+|---|---|---|---|
+| **极速更新** | 本仓库每次有新版本（`git pull` 之后）；「更新」页跑的就是它 | `python3.14 update_runtime.py "<App 路径>"` | App 记录的工作目录；不需要游戏文件和密钥 |
+| **快速更新** | 极速更新提示启动着色器不再匹配时（王国之泪、旷野之息：翻译链换了）。时之笛没有这一档：它的极速更新自己核对着色器 | `python3.14 update_runtime.py "<App 路径>" --seed` | 工作目录里的游戏文件；不需要游戏容器和密钥 |
+| **普通更新**（完整打包） | 上面两种提示需要完整打包时：换游戏版本、DLC 或游戏文件，代码改写规则或画面尺寸覆盖变了，时之笛的翻译器或翻译链变了，2026 年 11 月 11 日以前准备着色器的时之笛 App，工作目录不在了或删掉了 | 和第一次打包一样运行 `build_app.py`，`-o "<App 路径>"` 不变，用 App 记录的 `--work` | 游戏文件和密钥 |
+
+大金刚和 Pokopia 只有普通更新（`build_app.py`），同样会复用没变的翻译和管线。
+
 - **本仓库有新版本**（`git pull` 之后）：
-  - 先退出游戏，再运行 `python3.14 update_runtime.py "<App 路径>"`，约一分钟更新完，不需要游戏文件和密钥。
-  - 它提示启动着色器不再匹配时，加上 `--seed`。
+  - 先退出游戏，再运行 `python3.14 update_runtime.py "<App 路径>"`，这就是极速更新（见下），不需要游戏文件和密钥。
+  - 它提示启动着色器不再匹配时，加上 `--seed`（快速更新）。
 - **「更新」页**（设置面板，按 1）显示 App 是不是上游最新的 `main`，不是就列出每个新提交。打开这一页时，会在打包 App 的项目文件夹里拉取上游（不改动其中任何文件）。点**更新**按钮：游戏关闭，项目的 `main` 快进到上游（`git pull --ff-only`），运行 `update_runtime.py`（它要求时加 `--seed`），期间有一个小窗口显示正在更新，完成后重新打开游戏。项目不在 main 分支、有没提交的改动或上游没有的提交、找不到或连不上、或更新失败时，会说明原因，请你自己更新（本列表第一条）。2026 年 10 月 31 日以前打的 App 要先手动运行一次 `update_runtime.py`，之后才知道自己的项目文件夹。
+- **极速更新**：对王国之泪、旷野之息、时之笛的 App 运行 `update_runtime.py`，只重编运行时，输入没变的东西一律复用。复用前都会核对，不是直接假定没变：
+  - **翻译好的着色器**（时之笛）：每个翻译记着当初发给翻译器的请求。更新时让新运行时把请求重新生成一遍，请求一样的翻译直接复用，不一样的才重新翻译。王国之泪和旷野之息的启动着色器不受运行时影响。
+  - **Metal 着色器库**：只重编翻译变了的。
+  - **管线存档**：每条清单里的管线都对着上次的存档建一次（Metal 核对函数和状态）。没变的直接从存档取，变了的才现编，写进新文件。
+  - **文件核对**：文件还是原来那个（设备、inode、大小、修改时间都没变）的，沿用上次记下的哈希；只读新的或变了的文件。种子的每个文件都还是已发布的那个、来源也相同时，种子原样保留，用它签好的着色器数据子包也直接沿用。
+  - 实测（M4 Mac，时之笛，2026-11-11，运行时有改动）：约 9 分钟，42,891 个翻译、全部着色器库和 21,330 条管线都复用；没有这些核对之前同样的更新要 17 分钟，完整打包约 40 分钟。
+  - 只有更新程序提示时才需要完整运行 `build_app.py`：翻译链、翻译器、spirv-cross 或深度模式变了，游戏文件变了，代码改写规则变了；另外，2026 年 11 月 11 日以前准备着色器的时之笛 App 需要完整打包一次。
+  - 日志里写着复用了多少：`translations: N kept for this runtime's requests, M made again`、`seed files: …, K read again`、`… sources and … libraries read`，以及管线存档的 `按这个运行时核对，X 条和存档里的不一样`。
+  - 大金刚和 Pokopia 用 `build_app.py` 重新打包，打包时同样复用翻译和管线。
 - **退回更新前的版本**（新版本玩起来有问题时）：
   - 先退出游戏，用 `git reflog` 找到 `git pull` 之前所在的提交（`pull` 那一行下面的一行）。
   - 运行 `git checkout <那个提交>`（git 会提示 "detached HEAD"，这是正常的），再运行一次 `python3.14 update_runtime.py "<App 路径>"`；它要求时加上 `--seed`。

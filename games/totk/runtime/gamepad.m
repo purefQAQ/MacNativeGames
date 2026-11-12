@@ -17,6 +17,7 @@
 #include "runtime.h"
 #include "gamepad_layout.h"   // face buttons by position (PlayStation, Xbox) or label (Nintendo)
 #include "controller_map.h"   // the player's button layout (controls.txt)
+#include "input_prompts.h"
 #include "switch_left_fallback.h"
 #include "mouse_look.h"       // mouse mode: movement as the right stick and the gyro
 
@@ -49,6 +50,10 @@ static uint64_t gamepadRawLeftAt, gamepadRawRightAt;
 static int32_t gamepadNativeLx, gamepadNativeLy, gamepadNativeRx, gamepadNativeRy;   /* the sticks as GameController reads them */
 static void (*captureHook)(void);
 static int captureDown, captureSeen;   /* the capture button as the reports say, and as refresh_gamepads last saw it */
+/* The screenshot button (controller_map.h CONTROLLER_SCREENSHOT_*, user 2026-11-11): the physical button whose 3-second hold
+   takes the capture button's picture, -1 none; chosen in the key bindings and kept in controller-screenshot.txt. */
+static _Atomic int screenshotButton = CONTROLLER_SCREENSHOT_DEFAULT;
+static ControllerHold screenshotHold;   /* gamepadLock */
 static void refresh_gamepads(void);
 static void gamepad_options_gesture(GCExtendedGamepad *pad);
 static void gamepad_gestures_changed(void);
@@ -59,6 +64,8 @@ static void gamepad_gestures_changed(void);
    flag, and the refresh that follows calls the hook once per press. A macOS shortcut already bound to the button keeps
    it (System Settings > Game Center): the button then takes no picture. */
 void runtime_capture_set_hook(void (*hook)(void)) { captureHook = hook; }
+/* The input file's "capture" (runtime/input.c): the capture button pressed once, for automated tests of screenshots. */
+void runtime_capture_press(void) { if (captureHook) captureHook(); }
 /* A Switch 0x30 report: 1 while its button 5 is down, which arrives every few milliseconds while it is held. */
 void runtime_gamepad_switch_capture(void *controller, int pressed) {
     if (!controller) captureDown = 0;
@@ -91,7 +98,7 @@ static void load_controller_map(void) {
     controller_map_default(controllerMap, controllerModes);
     const char *path = getenv("TOTK_CONTROLS");
     FILE *f = path && *path ? fopen(path, "rb") : NULL;
-    if (!f) { fprintf(stderr, "[totk-input] controller layout: default\n"); return; }
+    if (!f) { fprintf(stderr, "[totk-input] controller layout: default\n"); runtime_prompt_controller(controllerMap); return; }
     char text[16384]; size_t n = fread(text, 1, sizeof text - 1, f); int whole = feof(f); fclose(f);
     if (!whole) runtime_fail("controller layout file too large");
     text[n] = 0;
@@ -100,6 +107,7 @@ static void load_controller_map(void) {
     uint16_t defaults[CONTROLLER_BUTTONS]; uint8_t defaultModes[CONTROLLER_BUTTONS]; controller_map_default(defaults, defaultModes);
     int changed = 0; for (int i = 0; i < CONTROLLER_BUTTONS; i++) changed += controllerMap[i] != defaults[i];
     fprintf(stderr, "[totk-input] controller layout: %s (%d buttons changed)\n", path, changed);
+    runtime_prompt_controller(controllerMap);
 }
 
 static int32_t stick_axis(float value) {
@@ -250,6 +258,7 @@ void runtime_controller_map_get(uint16_t *map, uint8_t *modes) {
     memcpy(map, controllerMap, sizeof controllerMap); memcpy(modes, controllerModes, sizeof controllerModes);
 }
 static void controller_map_changed(void) {
+    runtime_prompt_controller(controllerMap);
     physicalPrev = 0;
     memset(tapUntil, 0, sizeof tapUntil); memset(toggleOn, 0, sizeof toggleOn); memset(toggleMoved, 0, sizeof toggleMoved);
     gamepad_gestures_changed();
@@ -700,6 +709,39 @@ static void load_settings_button(void) {
     fprintf(stderr, "[totk-input] %s: not a controller button; the settings panel stays on L3 + R3\n", path);
 }
 int runtime_gamepad_settings_button(void) { return atomic_load(&settingsButton); }
+
+/* The screenshot button (key bindings): CONTROLLER_SCREENSHOT_DEFAULT (the touchpad) without a file; the file names another
+   by its controls.txt name, or "none". */
+static void load_screenshot_button(void) {
+    char path[4096], word[32] = {0};
+    if (!setting_read("controller-screenshot.txt", word, sizeof word, path, sizeof path)) return;
+    word[strcspn(word, " \t\r\n")] = 0;
+    if (!strcasecmp(word, "none")) {
+        atomic_store(&screenshotButton, -1);
+        fprintf(stderr, "[totk-input] screenshot button: none (%s)\n", path);
+        return;
+    }
+    for (int i = 0; i <= CONTROLLER_SWITCH_BUTTONS; i++)   /* the controller's buttons and the touchpad, not the mouse's */
+        if (!strcasecmp(word, controller_physical_names[i])) {
+            atomic_store(&screenshotButton, i);
+            fprintf(stderr, "[totk-input] screenshot button: %s held %d s (%s)\n", controller_physical_names[i], CONTROLLER_SCREENSHOT_HOLD_MS / 1000, path);
+            return;
+        }
+    fprintf(stderr, "[totk-input] %s: not a controller button; the screenshot stays on the %s\n", path,
+            controller_physical_names[CONTROLLER_SCREENSHOT_DEFAULT]);
+}
+int runtime_gamepad_screenshot_button(void) { return atomic_load(&screenshotButton); }
+void runtime_gamepad_screenshot_button_set(int physical) {
+    if (physical > CONTROLLER_SWITCH_BUTTONS) return;
+    if (physical < 0) physical = -1;
+    atomic_store(&screenshotButton, physical);
+    pthread_mutex_lock(&gamepadLock);
+    screenshotHold = (ControllerHold){0};   /* a hold of the old button does not carry over */
+    pthread_mutex_unlock(&gamepadLock);
+    if (physical == CONTROLLER_SCREENSHOT_DEFAULT) runtime_setting_remove("controller-screenshot.txt");
+    else setting_write("controller-screenshot.txt", physical < 0 ? "none" : controller_physical_names[physical], "screenshot button");
+    fprintf(stderr, "[totk-input] screenshot button: %s\n", physical < 0 ? "none" : controller_physical_names[physical]);
+}
 void runtime_gamepad_settings_button_set(int physical) {
     if (physical > CONTROLLER_SWITCH_BUTTONS) return;
     if (physical < 0) physical = -1;
@@ -719,6 +761,7 @@ int runtime_mouse_set(int on) {
     on = !!on;
     if (on == atomic_load(&mouseMode)) return on;
     atomic_store(&mouseMode, on);
+    runtime_prompt_mouse_mode(on);
     setting_write("mouse.txt", on ? "on" : "off", "mouse mode");
     if (!on) dispatch_async(dispatch_get_main_queue(), ^{ runtime_mouse_release(); });
     mouse_apply(on);
@@ -727,6 +770,7 @@ int runtime_mouse_set(int on) {
 
 void runtime_mouse_move(double dx, double dy) {   /* the window, while it holds the pointer */
     if (!atomic_load(&mouseMode)) return;
+    if (fabs(dx) + fabs(dy) >= 1) runtime_prompt_note_input(PROMPT_KEYBOARD);
     pthread_mutex_lock(&gamepadLock);
     mouse_look_move(&mouseLook, dx, dy, &mouseSettings);
     pthread_mutex_unlock(&gamepadLock);
@@ -805,9 +849,33 @@ static void refresh_gamepads(void) {
     int32_t nativeLx = 0, nativeLy = 0, nativeRx = 0, nativeRy = 0;
     uint64_t rawAt = 0, rawRightAt = 0;
     int capture = captureDown;
+    /* Keep activity per controller: a second pad's resting stick must not
+       continually look like a fresh movement relative to the first pad. */
+    typedef struct { uint64_t buttons; float axes[4]; } PromptActivity;
+    static NSMapTable<GCController *, NSMutableData *> *promptActivity;
+    if (!promptActivity) promptActivity = [NSMapTable weakToStrongObjectsMapTable];
     for (GCController *controller in GCController.controllers) {
         GCExtendedGamepad *pad = controller.extendedGamepad;
         if (!pad) continue;
+        uint64_t promptPhysical = gamepad_buttons(pad, face_by_position(controller));
+        float axes[] = {pad.leftThumbstick.xAxis.value, pad.leftThumbstick.yAxis.value,
+                        pad.rightThumbstick.xAxis.value, pad.rightThumbstick.yAxis.value};
+        NSMutableData *history = [promptActivity objectForKey:controller];
+        if (!history) {
+            history = [NSMutableData dataWithLength:sizeof(PromptActivity)];
+            [promptActivity setObject:history forKey:controller];
+        }
+        PromptActivity *previous = history.mutableBytes;
+        int meaningful = prompt_activity_changed(previous->buttons, promptPhysical, previous->axes, axes);
+        previous->buttons = promptPhysical;
+        memcpy(previous->axes, axes, sizeof axes);
+        if (meaningful) {
+            /* The player's pick (key 6) decides how the face buttons map, so it decides the labels too. */
+            int type = atomic_load(&controllerType);
+            if (type == GAMEPAD_TYPE_AUTO) type = gamepad_type_detect(controller.productCategory.UTF8String, controller.vendorName.UTF8String);
+            runtime_prompt_note_input(type == GAMEPAD_TYPE_PLAYSTATION ? PROMPT_PLAYSTATION :
+                                      type == GAMEPAD_TYPE_XBOX ? PROMPT_XBOX : PROMPT_SWITCH);
+        }
         next.connected = 1;
         physical |= gamepad_buttons(pad, face_by_position(controller));
         if (!capture && pad.buttons[GCInputButtonShare].isPressed) capture = 1;   /* the capture button (see runtime_capture_set_hook) */
@@ -837,6 +905,12 @@ static void refresh_gamepads(void) {
         next.ry = stronger_axis(next.ry, stick_axis(ry));
     }
     if (hidPad.present) {
+        static PromptActivity previous;
+        float axes[] = {hidPad.lx / 32767.f, hidPad.ly / 32767.f, hidPad.rx / 32767.f, hidPad.ry / 32767.f};
+        if (prompt_activity_changed(previous.buttons, hidPad.buttons, previous.axes, axes))
+            runtime_prompt_note_input(PROMPT_SWITCH);
+        previous.buttons = hidPad.buttons;
+        memcpy(previous.axes, axes, sizeof axes);
         next.connected = 1;
         physical |= hidPad.buttons;
         next.lx = stronger_axis(next.lx, hidPad.lx);
@@ -849,6 +923,7 @@ static void refresh_gamepads(void) {
     if (capture && !captureSeen && captureHook) captureHook();
     captureSeen = capture;
     uint64_t now = runtime_now_ns(), edges = physical & ~physicalPrev, synthetic = 0, suppressed = 0, trigger = settings_trigger();
+    int shotButton = atomic_load(&screenshotButton), shotHeld = shotButton >= 0 && (physical >> shotButton & 1), shotFire = 0;
     if (atomic_load(&settingsButton) >= 0) suppressed |= trigger;   /* a picked button is the panel's only */
     int moving = next.lx || next.ly;
     physicalPrev = physical;
@@ -899,6 +974,11 @@ static void refresh_gamepads(void) {
         if (!textCapture) textCapture = 2;   /* from here the game no longer gets the controller, until it is released */
     }
     settingsShortcutDown = chord;
+    /* The screenshot button held CONTROLLER_SCREENSHOT_HOLD_MS: one picture per hold. A button held still sends no report,
+       so the refresh comes again when the time is up. What else the button does is untouched. */
+    int shotStarted = shotHeld && !screenshotHold.down;
+    screenshotHold = controller_hold_next(screenshotHold, shotHeld, now, CONTROLLER_SCREENSHOT_HOLD_MS * 1000000ull, &shotFire);
+    uint64_t shotWait = shotStarted ? controller_hold_wait(screenshotHold, now, CONTROLLER_SCREENSHOT_HOLD_MS * 1000000ull) : UINT64_MAX;
     textEdges |= (physical & 0x1ffffu) & ~textPad.buttons;
     textPad = next; textPad.buttons = physical & 0x1ffffu;
     pressedEdges |= next.buttons & ~gamepadState.buttons;
@@ -908,6 +988,12 @@ static void refresh_gamepads(void) {
     gamepadRawLeftAt = rawAt; gamepadRawRightAt = rawRightAt;
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
     pthread_mutex_unlock(&gamepadLock);
+    if (shotWait != UINT64_MAX)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(shotWait + 20 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ refresh_gamepads(); });
+    if (shotFire) {
+        fprintf(stderr, "[totk-input] screenshot: %s held %d s\n", controller_physical_names[shotButton], CONTROLLER_SCREENSHOT_HOLD_MS / 1000);
+        if (captureHook) captureHook();   /* the capture button's own path (screenshot.h screenshot_request) */
+    }
 #if TARGET_OS_OSX
     if (changed && next.connected) awake_note_input();
 #else
@@ -1062,7 +1148,9 @@ void runtime_gamepad_start(void) {
     load_controller_map();
     load_controller_type();
     load_settings_button();
+    load_screenshot_button();
     load_mouse_mode();
+    runtime_prompt_mouse_mode(runtime_mouse_enabled());
 #if TARGET_OS_OSX
     load_gamepad_background();
 #endif
@@ -1102,6 +1190,7 @@ void runtime_gamepad_clear(void) {
     pressedEdges = 0; textEdges = 0; textPad = (RuntimeGamepadState){0};
     settingsShortcutDown = settingsShortcutPending = 0;
     captureDown = captureSeen = 0;   /* a button held at focus loss must not shoot on the way back */
+    screenshotHold = (ControllerHold){0};   /* nor finish a screenshot hold */
     mouse_look_reset(&mouseLook); mouseRX = mouseRY = 0;
     pthread_mutex_unlock(&gamepadLock);
 }
