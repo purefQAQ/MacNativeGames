@@ -120,7 +120,7 @@ if [ -z "$UPDATE_GAME" ]; then
     if select_candidate "update"; then
         UPDATE_GAME="$CHOSEN"
     elif [ "${#CANDIDATES[@]}" -eq 0 ]; then
-        echo "No update found. Supported updates are 1.1.2, 1.2.1, and 1.4.3."
+        echo "No update found. Supported updates are 1.2.1 and 1.4.3."
         read -r -p "Build the base game only (version 1.0.0)? [y/N] " answer || pause_and_exit
         case "$answer" in
             y|Y|yes|YES) ;;
@@ -140,20 +140,24 @@ if [ -z "$FIRMWARE_DIR" ]; then
             CANDIDATES+=("$dir")
         fi
     done < <(find "$GAME_FILES_ROOT" -path "$REPO_ROOT" -prune -o -maxdepth 1 -type d -iname 'Firmware*' -print0 2>/dev/null)
-    if ! select_candidate "firmware folder"; then
-        echo "Firmware NCA folder not found. Set FIRMWARE_DIR to your own unpacked firmware folder."
-        pause_and_exit
+    if [ "${#CANDIDATES[@]}" -gt 0 ]; then
+        if ! select_candidate "firmware folder"; then
+            pause_and_exit
+        fi
+        FIRMWARE_DIR="$CHOSEN"
     fi
-    FIRMWARE_DIR="$CHOSEN"
 fi
-if [ ! -d "$FIRMWARE_DIR" ] || ! find "$FIRMWARE_DIR" -maxdepth 1 -type f -iname '*.nca' -print -quit 2>/dev/null | grep -q .; then
+if [ -n "$FIRMWARE_DIR" ] && { [ ! -d "$FIRMWARE_DIR" ] || ! find "$FIRMWARE_DIR" -maxdepth 1 -type f -iname '*.nca' -print -quit 2>/dev/null | grep -q .; }; then
     echo "No firmware .nca files found in: $FIRMWARE_DIR"
     pause_and_exit
 fi
 
 mkdir -p "$LOG_DIR" || pause_and_exit
 log_file="$LOG_DIR/MacNativeGames-build-totk-$(date '+%Y%m%d-%H%M%S').log"
-build_args=("$BASE_GAME" -k "$KEYS_FILE" --firmware "$FIRMWARE_DIR" -o "$OUTPUT_APP")
+build_args=("$BASE_GAME" -k "$KEYS_FILE" -o "$OUTPUT_APP")
+if [ -n "$FIRMWARE_DIR" ]; then
+    build_args+=(--firmware "$FIRMWARE_DIR")
+fi
 if [ -n "$UPDATE_GAME" ]; then
     build_args+=(--update "$UPDATE_GAME")
 fi

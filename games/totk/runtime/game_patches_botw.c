@@ -24,9 +24,6 @@
 uint32_t runtime_thread_current_handle(void);
 
 int runtime_aspect_vr(float aspect, float vertical_factor) { (void)aspect; (void)vertical_factor; return 0; }
-int runtime_camera_distance_available(void) { return 0; }
-int runtime_camera_distance_cm(void) { return 0; }
-void runtime_camera_distance_set(int cm) { (void)cm; }
 void runtime_vr_find_head(int stage) { (void)stage; }
 
 static void botw_aspect_install(Module *m);   /* the aspect ratio, end of the file */

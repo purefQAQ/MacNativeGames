@@ -14,6 +14,7 @@ SHARED_FONTS="${SHARED_FONTS:-$GAME_FILES_ROOT/SourceData/The Legend of Zelda Te
 OUTPUT_APP="${OUTPUT_APP:-}"
 PYTHON="${PYTHON:-}"
 BASE_GAME="${BASE_GAME:-}"
+UPDATE_GAME="${UPDATE_GAME:-}"
 LOG_DIR="$HOME/Library/Logs"
 
 pause_and_exit() {
@@ -114,6 +115,24 @@ if [ ! -f "$BASE_GAME" ]; then
     echo "Game file not found: $BASE_GAME"
     pause_and_exit
 fi
+case "${BASE_GAME##*.}" in
+    [nN][sS][pP])
+        if [ -z "$UPDATE_GAME" ]; then
+            find_candidates 01007EF00011E800 -iname '*.nsp' -o -iname '*.nsz'
+            if select_candidate "Breath of the Wild update"; then
+                UPDATE_GAME="$CHOSEN"
+            else
+                echo "A supported 1.6.0 or 1.9.0 update is required when the base game is an NSP."
+                echo "Set UPDATE_GAME to the update file from your own game dump."
+                pause_and_exit
+            fi
+        fi
+        ;;
+esac
+if [ -n "$UPDATE_GAME" ] && [ ! -f "$UPDATE_GAME" ]; then
+    echo "Update file not found: $UPDATE_GAME"
+    pause_and_exit
+fi
 
 if [ ! -f "$KEYS_FILE" ]; then
     CANDIDATES=()
@@ -141,6 +160,9 @@ fi
 mkdir -p "$LOG_DIR" || pause_and_exit
 log_file="$LOG_DIR/MacNativeGames-build-botw-$(date '+%Y%m%d-%H%M%S').log"
 build_args=("$BASE_GAME" -k "$KEYS_FILE" --shared-fonts "$SHARED_FONTS" -o "$OUTPUT_APP")
+if [ -n "$UPDATE_GAME" ]; then
+    build_args+=(--update "$UPDATE_GAME")
+fi
 
 echo "Building Breath of the Wild with the current repository code."
 echo "The build can take about 20 minutes. Keep this window open."
