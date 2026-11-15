@@ -11,7 +11,7 @@ SOURCE_DUMP="${SOURCE_DUMP:-$GAME_FILES_ROOT/SourceData/Pokémon Pokopia/Pokopia
 WORK_DIR="${WORK_DIR:-$GAME_FILES_ROOT/SourceData/Pokémon Pokopia/Pokopia_build}"
 SHARED_FONTS="${SHARED_FONTS:-$GAME_FILES_ROOT/SourceData/The Legend of Zelda Tears of the Kingdom/TOTK_build/totk/extracted/firmware/shared-fonts}"
 ICON_FILE="${ICON_FILE:-$GAME_FILES_ROOT/SourceData/Icon/pokopia.jpeg}"
-OUTPUT_APP="${OUTPUT_APP:-$GAME_FILES_ROOT/Pokémon Pokopia.app}"
+OUTPUT_APP="${OUTPUT_APP:-$GAME_FILES_ROOT/app/Pokémon Pokopia.app}"
 PYTHON="${PYTHON:-}"
 
 pause_and_exit() {
