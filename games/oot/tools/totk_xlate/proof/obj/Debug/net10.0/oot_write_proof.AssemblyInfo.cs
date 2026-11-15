@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("oot_write_proof")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0aa95bdb073b3084b74a8419399d82b321f4f02a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b5cc17546cb0322d24253ce40560c1ef1cc850c8")]
 [assembly: System.Reflection.AssemblyProductAttribute("oot_write_proof")]
 [assembly: System.Reflection.AssemblyTitleAttribute("oot_write_proof")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
