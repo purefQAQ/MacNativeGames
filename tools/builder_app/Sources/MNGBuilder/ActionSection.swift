@@ -5,14 +5,20 @@ import SwiftUI
 /// error with its log.
 struct ActionSection: View {
     @EnvironmentObject var model: Model
+    var updateOnly = false   // in the installed apps' list: the progress of an update, no build button
     @State private var showLog = false
+
+    /// The job's progress shows where it was started: an update in the list, a build in step 3.
+    private var mine: Bool { updateOnly == (model.updating != nil) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            buttons
-            if model.phase != .idle { progress }
-            if let f = model.failure, model.phase == .failed { failure(f) }
-            if !model.lines.isEmpty {
+            if !updateOnly { buttons }
+            if let from = model.externalSource, mine { Label(T.startedBy(from), systemImage: "terminal").font(.callout).foregroundStyle(.secondary) }
+            if model.phase != .idle && mine { progress }
+            if let f = model.failure, model.phase == .failed, mine { failure(f) }
+            if !model.note.isEmpty && mine { Label(model.note, systemImage: "puzzlepiece.extension").foregroundStyle(.orange) }
+            if !model.lines.isEmpty && mine {
                 DisclosureGroup(T.log, isExpanded: $showLog) { logView }
             }
         }
@@ -26,12 +32,15 @@ struct ActionSection: View {
             case .cancelling:
                 Button(T.cancelling) {}.disabled(true)
             default:
+                if Model.quickGames.contains(model.plan?.game ?? "") {   // 快速启动 (user 2026-11-13)
+                    Toggle(T.quickStart, isOn: $model.quickStart).help(T.quickStartHelp)
+                }
                 Button(action: model.build) {
                     Text(model.existingApp == nil ? T.build : T.rebuild).frame(minWidth: 160)
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large).disabled(!model.canBuild)
                 if model.existingApp != nil || model.phase == .done {
-                    Button(T.play, action: model.play).controlSize(.large)
+                    Button(T.startGame, action: model.play).buttonStyle(.borderedProminent).tint(.green).controlSize(.large)
                     Button(T.showInFinder) { model.reveal(model.appPath ?? model.existingApp) }
                 }
             }
@@ -43,26 +52,31 @@ struct ActionSection: View {
         }
     }
 
+    /// Where the build is, in words (user 2026-11-16: "进度条 根本不动 改成 描述 比如 完成第一步 共五步 现在第三步
+    /// 400/40000 个着色器"): the stage, the step with what it does, the step's own counter, the times. No overall bar:
+    /// a first build has no record to measure it by, and a step skipped this time left it standing still.
     private var progress: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ProgressView(value: model.fraction)
             HStack {
                 Text(headline).font(.headline)
                 Spacer()
                 Text(times).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
             }
             if model.phase == .building || model.phase == .cancelling {
-                if !model.stageText.isEmpty { Text(model.stageText).font(.callout).foregroundStyle(.secondary) }
-                if !model.step.isEmpty {
-                    HStack {
-                        Text(model.step).font(.caption.monospaced()).foregroundStyle(.secondary)
-                        if let (done, total) = model.stepCount {
-                            ProgressView(value: Double(done), total: Double(total)).frame(maxWidth: 160)
-                            Text("\(done) / \(total)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                        }
-                    }
+                if let (i, n) = model.stageNumber { Text(T.stageOf(i, n, model.stage)).font(.callout) }
+                if model.stepIndex > 0 {
+                    Text(T.stepLine(model.stepIndex, model.stepsLast, T.stepName(model.step))).font(.title3)
                 }
-                if !model.measured { Text(T.firstBuild).font(.caption).foregroundStyle(.secondary) }
+                if let (done, total) = model.stepCount {
+                    Text(T.counted(done, total, T.stepUnit(model.step))).font(.title3.monospacedDigit())
+                }
+                if let stepLeft = model.stepLeft {   // from the step's own rate when it counts (user 2026-11-17)
+                    Text(T.stepLeft(T.minutes(stepLeft))).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                if !model.step.isEmpty {
+                    Text(model.step).font(.caption.monospaced()).foregroundStyle(.secondary)   // the log's name, for the log folder
+                }
+                if model.stepsLast == nil { Text(T.firstBuild).font(.caption).foregroundStyle(.secondary) }
             }
             if model.phase == .cancelled { Text(T.cancelled).foregroundStyle(.secondary) }
         }
@@ -70,11 +84,11 @@ struct ActionSection: View {
 
     private var headline: String {
         switch model.phase {
-        case .done: return T.doneOK
+        case .done: return !model.startedHere ? T.doneElsewhere : (model.kind == "full" ? T.doneOK : model.kind == "shaders" ? T.shadersDone : T.updatedOK)
         case .failed: return T.failed
         case .cancelling: return T.cancelling
         case .cancelled: return T.cancel
-        default: return model.stage.isEmpty ? T.building : model.stage
+        default: return model.kind == "full" ? (model.stage.isEmpty ? T.building : model.stage) : T.kind(model.kind)
         }
     }
 
@@ -93,6 +107,11 @@ struct ActionSection: View {
             }
             HStack {
                 if let log = f.step_log ?? f.log { Button(T.openLog) { NSWorkspace.shared.open(URL(fileURLWithPath: log)) } }
+                // the terminal page with an AI asked about this failure (user 2026-11-13)
+                Button(T.askAI) {
+                    model.page = "terminal"
+                    TerminalHost.shared.ask("claude", AIHelp.prompt(log: f.step_log ?? f.log))
+                }.buttonStyle(.borderedProminent)
                 Button(T.copyError) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString([f.message ?? "", f.detail ?? ""].joined(separator: "\n"), forType: .string)

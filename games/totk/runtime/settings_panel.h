@@ -105,9 +105,6 @@
    another action holds swaps places with this box's. Right-click clears a box. Two buttons reset the keyboard and mouse,
    or the controller, to the default (the file removed). A capture ends after 6 seconds without input. The last row is the
    screenshot (user 2026-11-11): P by default, and on a controller a button held 3 s (the touchpad by default).
-   Update (PR #1404; user 2026-10-31): the version, and that it is the newest or each newer commit's message; an Update
-   button that closes the game, updates the app from its checkout and opens it again, or why it cannot and how to update
-   the code and build again by hand (update_tab.h, app/auto_update.h).
    着色器贡献 (user 2026-11-10, contrib_tab.h): how many shaders were contributed and how many new ones were found, and one
    big switch, "Contribute shaders automatically", the start-up question's choice (totk_contrib_upload.h). On the display page, at the
    right of the bottom line, a button stars the project (its GitHub page); its note shows for a few seconds where the
@@ -275,7 +272,7 @@ static void settings_effects_restore(void) {}
 static void settings_restore_begin(void) {
  extern int vr_enabled(void);
  int v;char word[32];
- if(settings_read_int("graphics-overlay.txt",&v)&&v<=HUD_MODE_MINIMAL)fps_overlay_set_hud_mode(v);
+ if(settings_read_int("graphics-overlay.txt",&v)&&v<=HUD_MODE_FULL)fps_overlay_set_hud_mode(v);
  if(!getenv("TOTK_MFX")&&runtime_setting_word("graphics-frame.txt",word,sizeof word)){
   int n=0;char tail=0;
   if(sscanf(word,"lock-%d %c",&n,&tail)==1&&(n>0&&totk_fps_limit_valid(n))){dm_gfx_set_flag("mfx_interp",MFX_OFF);nvn_fps_lock_set(n);}
@@ -335,7 +332,7 @@ static void settings_restore_start(void) {
 
 /* The pages, in tab order. A page added here is counted in perPage (the panel height), given its tab, and its rows a
    SETTINGS_PAGE_* below. VR (zeldaVR) is last and only there while VR is on (settings_pages). */
-enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_USERS, SETTINGS_PAGE_EFFECTS, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGE_UPDATE, SETTINGS_PAGE_CONTRIB, SETTINGS_PAGE_BOARD, SETTINGS_PAGE_SHOTS, SETTINGS_PAGE_VR, SETTINGS_PAGES };
+enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_USERS, SETTINGS_PAGE_EFFECTS, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGE_CONTRIB, SETTINGS_PAGE_BOARD, SETTINGS_PAGE_SHOTS, SETTINGS_PAGE_VR, SETTINGS_PAGES };
 int vr_enabled(void);   /* zeldaVR/gfx/totk_vr.m: a headset link was asked for (TOTK_VR_CONTROL) */
 static int settings_pages(void){return vr_enabled()?SETTINGS_PAGES:SETTINGS_PAGE_VR;}
 static void settings_refresh_all(void);
@@ -352,6 +349,7 @@ static void settings_pointer_used(void);
 @property(copy) void (^set)(int value);
 @property(copy) NSString *(^firstTitle)(void);   /* a first choice whose text changes (auto: the controller it sees) */
 @property(copy) NSString *(^text)(void);         /* a fixed text value beside a button, no picker (the screenshot folder) */
+@property BOOL fullWidthText;                  /* a single status line across the whole row */
 @property(copy) NSString *buttonTitle;           /* the button at the row's end (with text) */
 @property(copy) void (^buttonAction)(void);
 @property int sliderMin, sliderMax;              /* a slider when sliderMax > sliderMin */
@@ -377,6 +375,9 @@ static void settings_pointer_used(void);
 -(void)refresh{
  if(self.text){NSString *t=self.text();
   if(![self.textLabel.stringValue isEqualToString:t]){self.textLabel.stringValue=t;self.textLabel.toolTip=t;}
+  if(self.fullWidthText){CGFloat width=[t sizeWithAttributes:@{NSFontAttributeName:[NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular]}].width;
+   CGFloat size=fmax(9,fmin(11,11*self.textLabel.bounds.size.width/fmax(1,width)));
+   if(fabs(self.textLabel.font.pointSize-size)>.01)self.textLabel.font=[NSFont monospacedSystemFontOfSize:size weight:NSFontWeightRegular];}
   return;}
  int v=self.get?self.get():0;
  if(self.slider){NSSlider *s=(NSSlider *)self.control;if(s.intValue!=v)s.intValue=v;self.valueLabel.stringValue=[NSString stringWithFormat:@"%d",v];return;}
@@ -490,6 +491,7 @@ static TOTKSettingRow *settings_sensitivity_row(void) {
  r.sliderMin=1;r.sliderMax=100;return r;
 }
 /* Auto's text: the type it takes the connected controller for (runtime/gamepad.m). */
+#include "dsu_settings_rows.h"
 static NSString *settings_pad_auto_text(void) {
  static const char *const names[GAMEPAD_TYPE_COUNT]={NULL,"Xbox","PlayStation","Switch"};
  int detected=-1;runtime_gamepad_type(&detected);
@@ -687,7 +689,7 @@ static TOTKSettingRow *settings_shadow_row(void) {
   settings_effects_save();});
 }
 /* HDR / EDR (PR #1129, the RenoDX approach; Mac, 1.4.3): the switch and the game's brightness (its white in SDR-white
-   units). hdr.txt holds on / off; each tone-mapping value its own hdr-<name>.txt (totk_hdr.h lists all thirteen; the
+   units). hdr.txt holds on / off / auto (hdr_auto.h); each tone-mapping value its own hdr-<name>.txt (totk_hdr.h lists all thirteen; the
    others, peak (0: the display's headroom), UI white, exposure, ..., are set in their files; the page has no room). Off leaves every shader, pipeline and texture as without HDR (nvn_mtl.m keeps both compose shaders).
    Frame interpolation shows SDR MetalFX frames, so turning HDR on turns it off (and picking it turns HDR off). */
 static TOTKSettingRow *settings_hdr_choice(int which,NSString *title,const int *milli,int n,NSString *(^text)(int)){
@@ -698,8 +700,11 @@ static TOTKSettingRow *settings_hdr_choice(int which,NSString *title,const int *
  return settings_row(title,choices,values,current,^(int v){front_hdr_parameter_save(which,v/1000.0f);});
 }
 static void settings_hdr_rows(NSMutableArray<TOTKSettingRow *> *rows){
- [rows addObject:settings_row(settings_text("HDR / EDR","HDR / EDR"),nil,nil,^int{return front_hdr_enabled();},^(int v){
-  if(v&&mfx_requested()!=MFX_OFF){dm_gfx_set_flag("mfx_interp",MFX_OFF);settings_save_frame();}
+ /* Off / Auto / On in this order: a controller stepping from Off reaches Auto without passing On, which turns frame
+    interpolation off. Auto keeps the interpolation choice: it runs wherever Auto leaves HDR off (hdr_auto.h). Picking
+    interpolation while HDR is on (On, or Auto on an HDR screen) turns HDR off, as before. */
+ [rows addObject:settings_row(settings_text("HDR / EDR","HDR / EDR"),@[settings_on_off(0),settings_text("自动（HDR 屏幕上开）","Auto (on an HDR screen)"),settings_on_off(1)],@[@(HDR_CHOICE_OFF),@(HDR_CHOICE_AUTO),@(HDR_CHOICE_ON)],^int{return front_hdr_choice();},^(int v){
+  if(v==HDR_CHOICE_ON&&mfx_requested()!=MFX_OFF){dm_gfx_set_flag("mfx_interp",MFX_OFF);settings_save_frame();}
   runtime_front_hdr_set(v);})];
  static const int white[]={500,750,1000,1500,2000};
  [rows addObject:settings_hdr_choice(TOTK_HDR_GAME_WHITE,settings_text("HDR 游戏亮度","HDR game brightness"),white,5,^NSString *(int v){
@@ -844,8 +849,10 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  /* Display */
  [rows addObject:settings_row(settings_text("性能信息","Overlay"),
-  @[settings_text("全部（FPS、着色器、读取、游玩时间）","All (FPS, shaders, load, playtime)"),settings_text("FPS 与游玩时间","FPS + playtime"),settings_on_off(0)],
-  @[@(HUD_MODE_ALL),@(HUD_MODE_MINIMAL),@(HUD_MODE_OFF)],
+  @[settings_text("全部（FPS、着色器、读取、游玩时间）","All (FPS, shaders, load, playtime)"),
+    settings_text("FPS 全信息（另加卡顿、着色器库、管线、存档没命中）","FPS full information (also hitches, libraries, pipelines, archive misses)"),   // user 2026-11-16
+    settings_text("FPS 与游玩时间","FPS + playtime"),settings_on_off(0)],
+  @[@(HUD_MODE_ALL),@(HUD_MODE_FULL),@(HUD_MODE_MINIMAL),@(HUD_MODE_OFF)],
   ^int{return fps_overlay_hud_mode();},^(int v){fps_overlay_set_hud_mode(v);settings_save_int("graphics-overlay.txt",v,"overlay");[(TOTKHudBox *)hudBox refresh];})];
  [rows addObject:settings_row(settings_text("帧率图","FPS graph"),nil,nil,
   ^int{return fpsGraphEnabled;},^(int v){fpsGraphEnabled=v;runtime_shared_setting_save("fps-graph.txt",v?"on":"off","FPS graph");[(TOTKFpsGraph *)fpsGraphBox setEnabled:v];[(TOTKHudBox *)hudBox refresh];})];
@@ -947,6 +954,7 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  [rows addObject:settings_feedback_row(0)];
  [rows addObject:settings_gain_row()];
  [rows addObject:settings_feedback_row(1)];
+ settings_dsu_rows(rows);
  NSUInteger input=rows.count;
  /* User (runtime/users.h, docs/users.md): the user this run opened with, and the one the next launch gets — the save
     area is named after the user's id, so another user plays on their own saves. A running game keeps its user. */
@@ -1133,7 +1141,6 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 @property(strong) NSButton *listToggle;   /* "Show as list" / "Show drawings" */
 @property(strong) NSArray<NSNumber *> *padOrder;   /* the controller buttons a controller moves through on the drawing */
 @property(strong) id clickMonitor;   /* any click in the panel hides the controller's highlight */
-@property(strong) NSMutableArray<NSView *> *updatePageTargets;   /* the 更新 page's buttons (update_tab.h) */
 -(void)selectPage:(NSInteger)page;
 -(void)controllerPad:(RuntimeGamepadState)pad time:(double)now active:(BOOL)active;
 -(void)controllerHighlight;
@@ -1151,7 +1158,6 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 -(void)rightMouseDown:(NSEvent *)e{(void)e;if(self.enabled)[self.panel clearBinding:self];}
 @end
 
-#include "update_tab.h"   /* the 更新 page */
 #include "contrib_tab.h"   /* the 着色器贡献 page */
 #include "nick_row.h"   /* the player's nickname: a row on the 排行榜 and 截图分享 pages */
 #include "board_tab.h"   /* the 排行榜 page */
@@ -1233,7 +1239,7 @@ enum { SETTINGS_W = 740, SETTINGS_NARROW_W = 600, SETTINGS_ROW_H = 34, SETTINGS_
  title.textColor=NSColor.whiteColor;title.frame=NSMakeRect(18,h-38,300,24);[self addSubview:title];
  NSButton *close=[NSButton buttonWithTitle:@"✕" target:self action:@selector(close:)];close.bordered=NO;close.refusesFirstResponder=YES;
  close.font=[NSFont systemFontOfSize:15 weight:NSFontWeightBold];close.contentTintColor=NSColor.whiteColor;close.frame=NSMakeRect(W-40,h-40,28,28);[self addSubview:close];
- NSArray<NSString *> *tabNames=@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("用户","User"),settings_text("画面效果","Effects"),settings_text("按键设置","Key bindings"),settings_text("更新","Update"),settings_text("着色器贡献","Shaders"),settings_text("性能排行榜","Performance"),settings_text("截图分享","Screenshots")];
+ NSArray<NSString *> *tabNames=@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("用户","User"),settings_text("画面效果","Effects"),settings_text("按键设置","Key bindings"),settings_text("着色器贡献","Shaders"),settings_text("性能排行榜","Performance"),settings_text("截图分享","Screenshots")];
  if(vr_enabled())tabNames=[tabNames arrayByAddingObject:@"VR"];
  NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:tabNames
   trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tabChanged:)];
@@ -1259,12 +1265,14 @@ enum { SETTINGS_W = 740, SETTINGS_NARROW_W = 600, SETTINGS_ROW_H = 34, SETTINGS_
     NSTextField *value=[NSTextField labelWithString:@""];value.font=[NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightMedium];
     value.textColor=label.textColor;value.alignment=NSTextAlignmentRight;value.frame=NSMakeRect(rw-46,floor((rowH-18)/2),34,18);[band addSubview:value];r.valueLabel=value;
    }else if(r.text){   /* a fixed value with the button that changes it at the row's end (the screenshot folder) */
-    NSButton *b=[NSButton buttonWithTitle:r.buttonTitle target:nil action:nil];
+    NSButton *b=[NSButton buttonWithTitle:r.buttonTitle?:@"" target:nil action:nil];
     b.controlSize=NSControlSizeSmall;b.font=[NSFont systemFontOfSize:11];[b sizeToFit];
     b.frame=NSMakeRect(rw-8-b.frame.size.width,floor((rowH-b.frame.size.height)/2),b.frame.size.width,b.frame.size.height);
+    if(!r.buttonAction){b.hidden=YES;b.enabled=NO;b.frame=NSMakeRect(rw-8,0,0,0);}
     NSTextField *t=[NSTextField labelWithString:r.text()];t.font=[NSFont systemFontOfSize:11];t.textColor=label.textColor;
     t.lineBreakMode=NSLineBreakByTruncatingMiddle;   /* a long path keeps both of its ends */
     t.frame=NSMakeRect(rw-popW-8,floor((rowH-18)/2),popW-b.frame.size.width-14,18);
+    if(r.fullWidthText){label.hidden=YES;t.frame=NSMakeRect(12,floor((rowH-18)/2),rw-24,18);t.font=[NSFont monospacedSystemFontOfSize:11 weight:NSFontWeightRegular];t.lineBreakMode=NSLineBreakByTruncatingTail;}
     t.toolTip=t.stringValue;[band addSubview:t];r.textLabel=t;r.control=b;
    }else if(!r.choices){NSSwitch *s=[NSSwitch new];[s sizeToFit];s.frame=NSMakeRect(rw-12-s.frame.size.width,(rowH-s.frame.size.height)/2,s.frame.size.width,s.frame.size.height);r.control=s;}
    else{NSPopUpButton *pop=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(rw-popW-8,floor((rowH-26)/2),popW,26) pullsDown:NO];[pop addItemsWithTitles:r.choices];
@@ -1283,7 +1291,6 @@ enum { SETTINGS_W = 740, SETTINGS_NARROW_W = 600, SETTINGS_ROW_H = 34, SETTINGS_
  for(NSInteger p=0;p<SETTINGS_PAGE_BINDINGS;p++)[pages addObject:rowPage(p)];
  NSRect bindingsFrame=NSMakeRect(0,SETTINGS_BOTTOM,W,body);
  NSView *bindings=drawings?[self drawingsPageWithFrame:bindingsFrame]:[self bindingsPageWithFrame:bindingsFrame];[self addSubview:bindings];[pages addObject:bindings];
- NSView *update=[self updatePageWithFrame:bindingsFrame];[self addSubview:update];[pages addObject:update];
  NSView *contrib=[self contribPageWithFrame:bindingsFrame];[self addSubview:contrib];[pages addObject:contrib];   /* contrib_tab.h */
  NSView *board=[self boardPageWithFrame:bindingsFrame];[self addSubview:board];[pages addObject:board];   /* board_tab.h */
  NSView *shots=[self shotsPageWithFrame:bindingsFrame];[self addSubview:shots];[pages addObject:shots];   /* shot_tab.h */
@@ -1386,7 +1393,6 @@ enum { SETTINGS_W = 740, SETTINGS_NARROW_W = 600, SETTINGS_ROW_H = 34, SETTINGS_
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  for(TOTKSettingRow *r in self.allRows)if(r.page==page)[rows addObject:r];
  self.rows=rows;self.controllerIndex=0;
- if(page==SETTINGS_PAGE_UPDATE)[self showUpdatePage];   /* a check (update_tab.h) */
  if(page==SETTINGS_PAGE_CONTRIB)[self refreshContribPage];   /* the number now, not at the next tick */
  if(page==SETTINGS_PAGE_BOARD)[self refreshBoardPage];   /* the board now (read again at most once a minute) */
  if(page==SETTINGS_PAGE_SHOTS)[self refreshShotsPage];   /* the pictures now (read again at most once a minute) */
@@ -1452,8 +1458,7 @@ static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [setting
    switch, the controller's buttons (the controller drawing) and the buttons below. */
 -(void)updateTargets{
  [self.controllerTargets removeAllObjects];self.padOrder=@[];
- if(self.page==SETTINGS_PAGE_UPDATE)[self.controllerTargets addObjectsFromArray:self.updatePageTargets];
- else if(self.page==SETTINGS_PAGE_CONTRIB)[self.controllerTargets addObjectsFromArray:[self contribPageTargets]];
+ if(self.page==SETTINGS_PAGE_CONTRIB)[self.controllerTargets addObjectsFromArray:[self contribPageTargets]];
  else if(self.page==SETTINGS_PAGE_BOARD)[self.controllerTargets addObjectsFromArray:[self boardPageTargets]];
  else if(self.page==SETTINGS_PAGE_SHOTS)[self.controllerTargets addObjectsFromArray:[self shotsPageTargets]];
  else if(self.page!=SETTINGS_PAGE_BINDINGS){for(TOTKSettingRow *r in self.rows)[self.controllerTargets addObject:r.control.superview];
@@ -1557,23 +1562,13 @@ static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [setting
  fprintf(stderr,"[totk] settings: controller %s -> %s\n",controller_physical_names[physical],action<0?"nothing":controller_switch_names[action]);
  [self refreshBindings];
 }
-/* A new document can change the 更新 page's buttons with no input from the player, and A acts at once. The place stays on
-   its button; when that goes, the next A only shows the new place. */
--(void)refreshUpdateTargets{
- NSInteger at=self.controllerIndex;NSView *place=at>=0&&at<(NSInteger)self.controllerTargets.count?self.controllerTargets[(NSUInteger)at]:nil;
- [self refreshUpdatePage];
- NSUInteger now=place?[self.updatePageTargets indexOfObject:place]:NSNotFound;
- if(now!=NSNotFound)self.controllerIndex=(NSInteger)now;
- else if(place){self.controllerIndex=0;g_settings_controller_active=NO;}
- [self updateTargets];
-}
 -(void)refresh{
 #ifdef TOTK_GAME_V143
  if(self.aaMethod!=dm_gfx_aa_method()){
   self.aaMethod=dm_gfx_aa_method();dispatch_async(dispatch_get_main_queue(),^{settings_aa_rebuild();});
  }
 #endif
- for(TOTKSettingRow *r in self.allRows)[r refresh];[self refreshBindings];if(self.page==SETTINGS_PAGE_UPDATE)[self refreshUpdateTargets];if(self.page==SETTINGS_PAGE_CONTRIB)[self refreshContribPage];if(self.page==SETTINGS_PAGE_BOARD)[self refreshBoardPage];
+ for(TOTKSettingRow *r in self.allRows)[r refresh];[self refreshBindings];if(self.page==SETTINGS_PAGE_CONTRIB)[self refreshContribPage];if(self.page==SETTINGS_PAGE_BOARD)[self refreshBoardPage];
  if(self.page==SETTINGS_PAGE_SHOTS)[self refreshShotsPage];
 }
 -(void)refreshBindings{
@@ -1699,7 +1694,6 @@ static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [setting
  return self.padOrder[i-1].intValue;
 }
 -(void)controllerMove:(int)step{
- if(self.page==SETTINGS_PAGE_UPDATE){[self scrollUpdatePage:step];return;}   /* up / down read on; left / right pick the button */
  NSInteger count=self.controllerTargets.count;
  for(NSInteger n=0;n<count;n++){
   self.controllerIndex=(self.controllerIndex+step+count)%count;
@@ -1730,10 +1724,10 @@ static void settings_footer_note(NSString *text, BOOL bad) { (void)bad; [setting
  }
  if(i>=(NSInteger)self.rows.count){   /* a button after the rows */
   if(select)[(NSButton *)self.controllerTargets[i] performClick:nil];
-  else if(self.page==SETTINGS_PAGE_UPDATE){self.controllerIndex=(i+step+(NSInteger)self.controllerTargets.count)%(NSInteger)self.controllerTargets.count;[self controllerHighlight];}
   return;
  }
  TOTKSettingRow *r=self.rows[i];
+ if(r.text&&!r.buttonAction)return;
  if(r.buttonAction){if(select)[r changed:r.control];[self controllerHighlight];return;}   /* the text row: A is its button */
  if(r.slider){if(select)return;NSSlider *s=(NSSlider *)r.control;s.intValue=MAX(r.sliderMin,MIN(r.sliderMax,s.intValue+step*5));}
  else if(r.choices){

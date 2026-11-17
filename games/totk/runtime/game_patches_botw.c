@@ -543,6 +543,61 @@ static void patch_blend_first_step(Module *m, uint64_t stub) {
     fprintf(stderr, "[botw] camera blends start with one 30 fps frame, then follow the measured ratio (veneer +%#llx; TOTK_BLEND_FIRST_STEP=0: as shipped)\n",
             (unsigned long long)stub);
 }
+/* Moving platforms above 30 fps (TOTK_KF_ANGLE=0: as shipped). The bodies the game moves (a Divine Beast's floor while
+   it tilts, lifts, gates) get each physics step the angular velocity that takes them to their target; main+0x12d57fc
+   takes the angle of the turn left from hkQuaternion::getAngle (main+0xb06d4), 2 acos(|w|). Below about a milliradian
+   w rounds to 1.0 in a float and the turn reads as none. Vah Medoh's floor turns about 1.7 mrad per 30 fps frame, less
+   per step at higher rates: the floor stood still for some steps and then caught up at once, and Link on it hopped in
+   place, more the higher the frame rate, not at 30+30 (user, 2026-11-13). Cause and cure as found by SavageWindRecomp
+   (pull request #312: at 120 fps, Link's vertical speed jitter fell from 0.9-1.6 m/s to 0.07-0.13). The call now goes to
+   a veneer that returns 2 atan2(|xyz|, |w|), the same angle without the rounding, through the game's own atan2f import
+   (PLT main+0x159ff10, GOT main+0x1d78050). getAngle's caller only reads s0 back (main+0x12d5804) and keeps its values on
+   the stack across the call; the veneer uses only caller-saved registers, as getAngle and its acosf call do. */
+static void patch_kf_angle(Module *m, uint64_t stub) {
+    const char *e = getenv("TOTK_KF_ANGLE");
+    if (!ios_code() && e && !strcmp(e, "0")) { fprintf(stderr, "[botw] moving platforms' turn angle as shipped, 2 acos(|w|) (TOTK_KF_ANGLE=0)\n"); return; }
+    enum { SITE = 0x12d57fc, ATAN2F = 0x159ff10 };
+    static const struct { uint32_t off, original; } check[] = {
+        {0x12d57f8u, 0x3c9983a0u},     /* stur q0, [x29, #-0x68] */
+        {0x12d57fcu, 0x97b76bb6u},     /* bl main+0xb06d4 (hkQuaternion::getAngle) */
+        {0x12d5800u, 0x3cd883a6u},     /* ldur q6, [x29, #-0x78] */
+        {0x12d5804u, 0x1e2008c0u},     /* fmul s0, s6, s0 */
+        {0xb06d4u, 0x3dc00000u},       /* ldr q0, [x0] */
+        {0xb06f8u, 0x9453bdf6u},       /* bl main+0x159fed0 (acosf) */
+        {0x159ff10u, 0xb0003ed0u},     /* adrp x16, main+0x1d78000 */
+        {0x159ff14u, 0xf9402a11u},     /* ldr x17, [x16, #0x50] (atan2f) */
+        {0x159ff1cu, 0xd61f0220u},     /* br x17 */
+    };
+    for (size_t i = 0; !CODE_PATCHED_AT_BUILD && i < sizeof check / sizeof *check; i++) {
+        uint32_t w; memcpy(&w, m->base + check[i].off, 4);
+        if (w != check[i].original) {
+            fprintf(stderr, "[botw] moving platforms main+%#x: found %08x expected %08x\n", check[i].off, w, check[i].original);
+            runtime_fail("the moving platforms' turn angle requires the 1.9.0 keyframed-body code");
+        }
+    }
+    const uint32_t veneer[] = {
+        0x3dc00000u,   /* ldr q0, [x0]                 x, y, z, w of the turn left */
+        0x6e20dc01u,   /* fmul v1.4s, v0.4s, v0.4s */
+        0x7e30d822u,   /* faddp s2, v1.2s              x² + y² */
+        0x5e140423u,   /* mov s3, v1.s[2] */
+        0x1e232842u,   /* fadd s2, s2, s3              + z² */
+        0x5e1c0401u,   /* mov s1, v0.s[3] */
+        0x1e20c021u,   /* fabs s1, s1                  |w| */
+        0x1e21c040u,   /* fsqrt s0, s2                 |xyz| */
+        0xa9bf7bfdu,   /* stp x29, x30, [sp, #-16]! */
+        0x910003fdu,   /* mov x29, sp */
+        0x94000000u | (uint32_t)((((int64_t)ATAN2F - (int64_t)(stub + 40)) >> 2) & 0x3ffffff),   /* bl atan2f */
+        0xa8c17bfdu,   /* ldp x29, x30, [sp], #16 */
+        0x1e202800u,   /* fadd s0, s0, s0              2 atan2(|xyz|, |w|) */
+        0xd65f03c0u,   /* ret */
+    };
+    if (stub + sizeof veneer > ((m->text_end + 0xfff) & ~0xfffULL)) runtime_fail("moving platforms veneer layout");
+    for (size_t i = 0; !CODE_PATCHED_AT_BUILD && i < sizeof veneer; i++) if (m->base[stub + i]) runtime_fail("moving platforms veneer padding not empty");
+    put_words(m, stub, veneer, sizeof veneer / sizeof *veneer, "moving platforms veneer");
+    put_word(m, SITE, 0x94000000u | (uint32_t)((((int64_t)stub - (int64_t)SITE) >> 2) & 0x3ffffff), "moving platforms turn angle");
+    fprintf(stderr, "[botw] moving platforms: the turn angle is 2 atan2(|xyz|, |w|), small turns kept (veneer +%#llx; TOTK_KF_ANGLE=0: as shipped)\n",
+            (unsigned long long)stub);
+}
 static void patch_realtime(Module *m) {
     uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
     if (data_off + 0x4000 != m->size || data_off & 0xfff) runtime_fail("real-time frame-step page layout");
@@ -580,6 +635,7 @@ static void patch_realtime(Module *m) {
             sizeof put / sizeof *put, sizeof check / sizeof *check);
     patch_pad_repeat(m, page);
     patch_blend_first_step(m, ((m->text_end + 15) & ~15ULL) + 80);   /* after the FOV stub (+32, 11 words) */
+    patch_kf_angle(m, ((m->text_end + 15) & ~15ULL) + 0x300);        /* past the VR and heap veneers (+0x80..+0x158) */
 }
 #endif
 /* Diagnostics (TOTK_JQ_CHECK=1): random crashes look like one job run twice (two threads in the same skinning job, a list
@@ -1120,6 +1176,132 @@ static void patch_font_size(Module *m) {
             "(reference table, main+%#x TextScaleOn) (TOTK_FONT_RES=0 keeps 720p)\n",
             h / 720.0, h, big[1], big[2], big[3], big[0], FONT_SCALE);
 }
+/* Sharp UI captures, 1.9.0 and 1.6.0. A layout pane named N_Capture_* (and N_CaptureText_*, ...) is not drawn to the
+   screen: the game draws it into a texture of its own, and pictures of the layout show that texture (DemoName_00, the
+   name card of a character intro: the name and subtitle text boxes under N_Capture_00..02, shown by P_Name_00/01 and
+   P_SubText_00/01 with a light sweep). Both textures take the pane's size in layout units (1280x720), so on a 1944-line
+   canvas the picture stretches them 2.7x and the brush-style heading is blurry:
+   - the kept texture (1.9.0 main+0xf59710..0xf597b0, 1.6.0 main+0x1351720..0x13517d8): pane width / height
+     (+0x50 / +0x54) x the pane's user data "CaptureScale" (used only when it is in (0, 1)), rounded (+-0.5, fcvtzs) and
+     given to the texture maker (1.9.0 main+0xed6ae0, 1.6.0 main+0x1296030);
+   - the render target of each capture pass (1.9.0 main+0xf5a028, 1.6.0 main+0x13508e0): the same width / height (x the
+     pane's global scale when +0xda bit 6 and a global flag are set) truncated (fcvtzu) for its viewport, with the pane's
+     own size as the projection, then copied into the kept texture. A pane with +0xda bit 4 sizes the render target from
+     the screen instead (pane size x render target / layout, so 2.7x on a 1944-line canvas), but its kept texture still
+     takes the pane's size: the big heading of the name card (700x114 kept, 1890x307 drawn) is such a pane.
+   Two stubs multiply both sizes by k = canvas height / 720, the font raster's factor (patch_font_size): the pane is drawn
+   k times finer into a k times larger texture, and the pictures show it at the same place and size. Stub A scales every
+   kept texture (bit-4 panes too), stub B the render target of a pane without bit 4, rounded as the kept one so the copy
+   fills it. Panes of a quarter of the 1280x720 layout or more (the 1280x720 blurred backgrounds of the pause menu, map
+   and system windows: 26-38 MiB each at k = 2.7) stay as shipped; the text captures are 0.1-5.5 MiB each at k = 2.7.
+   Only panes at least 150 layout units wide are scaled (TOTK_CAPTURE_MIN_W): the text captures (name cards, quest and
+   location names, messages, button labels) are wide; the narrow ones are icons and gauges, and the scaled stamina gauge
+   (PaGanbariGauge_01, 80x80 and 90x90, six half-ring pictures in one capture) showed a vertical line through the ring.
+   The second CaptureScale reader (1.9.0 main+0xf60e24, 1.6.0 main+0x135bca0) is another capture path that the name
+   card does not take; it stays as shipped. 1.6.0 compiles the pass differently (the size goes to s0 / s1 with x0 = the
+   pane, not s10 / s11 with x24), so its stub B differs; stub A is the same. TOTK_CAPTURE_RES=0 keeps all as shipped. */
+#ifdef GAME_BOTW190
+static const struct { uint32_t off, original; } g_capture_check[] = {
+    {0xf59710u, 0x2d4a2269u},   /* ldp s9, s8, [x19, #0x50]: the pane's width and height */
+    {0xf59744u, 0x1e200929u},   /* fmul s9, s9, s0: x CaptureScale */
+    {0xf5974cu, 0x1e202128u},   /* fcmp s9, #0.0 (site A) */
+    {0xf59750u, 0x1e3c1000u},   /* fmov s0, #-0.5: s0, s1 and w8 are written before they are read */
+    {0xf597a8u, 0x1e380044u},   /* fcvtzs w4, s2: the kept texture's width */
+    {0xf597acu, 0x1e380005u},   /* fcvtzs w5, s0: its height */
+    {0xf5a058u, 0x2d4a2408u},   /* ldp s8, s9, [x0, #0x50]: the pass's pane size */
+    {0xf5a070u, 0xaa0003f8u},   /* mov x24, x0: the pane */
+    {0xf5a0b8u, 0x1e20412au},   /* fmov s10, s9 (site B) */
+    {0xf5a0bcu, 0x1e20410bu},   /* fmov s11, s8 */
+    {0xf5a0c4u, 0x36200188u},   /* tbz w8, #4: the screen-sized target replaces s10 / s11 */
+    {0xf5a104u, 0x1e390164u},   /* fcvtzu w4, s11: the render target's width */
+    {0xf5a118u, 0x1e390145u},   /* fcvtzu w5, s10: its height */
+};
+enum { CAPTURE_SITE_A = 0xf5974c, CAPTURE_SITE_B = 0xf5a0b8 };
+#define CAPTURE_STUB_B   /* x24 = pane, s8 / s9 = the pass's width / height -> s11 / s10 */ \
+    0x1e20412au, 0x1e20410bu,   /* fmov s10, s9 / fmov s11, s8 (as shipped) */ \
+    0xbd405300u, 0x1c0001c1u, 0x1e212000u, 0x5400014bu,   /* ldr s0, [x24, #0x50] / ldr s1, minw / fcmp s0, s1 / b.lt ret */ \
+    0x2d4a0700u, 0x1e210800u,   /* ldp s0, s1, [x24, #0x50] / fmul s0, s0, s1: the pane's area */ \
+    0x1c000101u, 0x1e212000u, 0x540000aau,   /* ldr s1, area / fcmp s0, s1 / b.ge ret */ \
+    0x1c0000e0u, 0x1e2c1001u,   /* ldr s0, k / fmov s1, #0.5 */ \
+    0x1f00052au, 0x1f00050bu,   /* fmadd s10, s9, s0, s1 / fmadd s11, s8, s0, s1: rounded as the kept texture */ \
+    0xd65f03c0u   /* ret */
+#else
+static const struct { uint32_t off, original; } g_capture_check[] = {
+    {0x1351720u, 0x2d4a2269u},   /* ldp s9, s8, [x19, #0x50]: the pane's width and height */
+    {0x1351764u, 0x1e291c29u},   /* fcsel s9, s1, s9, ne: x CaptureScale */
+    {0x135176cu, 0x1e202128u},   /* fcmp s9, #0.0 (site A) */
+    {0x1351770u, 0x1e3c1000u},   /* fmov s0, #-0.5: s0, s1 and w8 are written before they are read */
+    {0x1351790u, 0x1e380045u},   /* fcvtzs w5, s2: the kept texture's width */
+    {0x1351798u, 0x1e380006u},   /* fcvtzs w6, s0: its height */
+    {0x1350914u, 0x2d4a2408u},   /* ldp s8, s9, [x0, #0x50]: the pass's pane size, x0 = the pane */
+    {0x1350968u, 0x4ea91d20u},   /* mov v0.16b, v9.16b (site B) */
+    {0x135096cu, 0x4ea81d01u},   /* mov v1.16b, v8.16b */
+    {0x1350970u, 0xa90403eau},   /* stp x10, x0, [sp, #0x40]: x0 is still the pane */
+    {0x1350974u, 0x36200188u},   /* tbz w8, #4: the screen-sized target replaces s0 / s1 (s2, s3 are free here) */
+    {0x13509dcu, 0x1e39003cu},   /* fcvtzu w28, s1: the render target's width */
+    {0x13509e0u, 0x1e390016u},   /* fcvtzu w22, s0: its height */
+};
+enum { CAPTURE_SITE_A = 0x135176c, CAPTURE_SITE_B = 0x1350968 };
+#define CAPTURE_STUB_B   /* x0 = pane, s8 / s9 = the pass's width / height -> s1 / s0 */ \
+    0x4ea91d20u, 0x4ea81d01u,   /* mov v0.16b, v9.16b / mov v1.16b, v8.16b (as shipped) */ \
+    0xbd405002u, 0x1c0001c3u, 0x1e232040u, 0x5400014bu,   /* ldr s2, [x0, #0x50] / ldr s3, minw / fcmp s2, s3 / b.lt ret */ \
+    0x2d4a0c02u, 0x1e230842u,   /* ldp s2, s3, [x0, #0x50] / fmul s2, s2, s3: the pane's area */ \
+    0x1c000103u, 0x1e232040u, 0x540000aau,   /* ldr s3, area / fcmp s2, s3 / b.ge ret */ \
+    0x1c0000e2u, 0x1e2c1003u,   /* ldr s2, k / fmov s3, #0.5 */ \
+    0x1f020d20u, 0x1f020d01u,   /* fmadd s0, s9, s2, s3 / fmadd s1, s8, s2, s3: rounded as the kept texture */ \
+    0xd65f03c0u   /* ret */
+#endif
+enum { CAPTURE_STUB_B_AT = 14, CAPTURE_MIN_W = 31, CAPTURE_K = 32 };
+static const uint32_t g_capture_stub[] = {   /* stubs A and B, then their three literals; 33 words */
+    /* A: x19 = pane, s9 / s8 = the kept texture's width / height; ends with the fcmp it replaces */
+    0xbd405260u, 0x1c0003c1u, 0x1e212000u, 0x5400012bu,   /* ldr s0, [x19, #0x50] / ldr s1, minw / fcmp s0, s1 / b.lt A+0x30 */
+    0x2d4a0660u, 0x1e210800u,   /* ldp s0, s1, [x19, #0x50] / fmul s0, s0, s1: the pane's area */
+    0x1c000301u, 0x1e212000u, 0x5400008au,   /* ldr s1, area / fcmp s0, s1 / b.ge A+0x30 */
+    0x1c0002e0u, 0x1e200929u, 0x1e200908u,   /* ldr s0, k / fmul s9, s9, s0 / fmul s8, s8, s0 */
+    0x1e202128u, 0xd65f03c0u,   /* fcmp s9, #0.0 / ret */
+    CAPTURE_STUB_B,
+    0x48610000u,   /* area: 230400.0f, a quarter of 1280x720 */
+    0x43160000u,   /* minw: 150.0f, set below */
+    0x3f800000u,   /* k: set below */
+};
+#undef CAPTURE_STUB_B
+_Static_assert(sizeof g_capture_stub / 4 == 33, "the literal offsets in the stub words assume 33 words");
+static void patch_capture_res(Module *m) {
+    if (ios_code()) return;
+    const char *e = getenv("TOTK_CAPTURE_RES");
+    if (e && !strcmp(e, "0")) { fprintf(stderr, "[botw] UI capture textures as shipped, 720p (TOTK_CAPTURE_RES=0)\n"); return; }
+    unsigned w, h; if (!runtime_output_res(&w, &h)) h = 1080;
+    if (h <= 720) return;
+    for (size_t i = 0; i < sizeof g_capture_check / sizeof *g_capture_check; i++) {
+        uint32_t word; memcpy(&word, m->base + g_capture_check[i].off, 4);
+        if (word != g_capture_check[i].original) {
+            fprintf(stderr, "[botw] UI capture main+%#x: found %08x expected %08x\n", g_capture_check[i].off, word, g_capture_check[i].original);
+            runtime_fail("sharp UI captures require the " TOTK_GAME_VERSION " capture instructions");
+        }
+    }
+    /* the patch area's tail after the typing-speed stub (patch_font_typing: 23 words at the 16-byte aligned file end) */
+    const uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
+    const uint64_t stub = ((m->file_size + 15) & ~15ULL) + 96;
+    int room = stub >= m->patch_off && stub + sizeof g_capture_stub <= data_off;
+    for (size_t i = 0; room && i < sizeof g_capture_stub; i++) room = !m->base[stub + i];
+    if (!room) {
+        fprintf(stderr, "[botw] UI capture textures: no free %zu bytes at main+%#llx: as shipped (720p)\n", sizeof g_capture_stub, (unsigned long long)stub);
+        return;
+    }
+    uint32_t words[sizeof g_capture_stub / 4];
+    memcpy(words, g_capture_stub, sizeof words);
+    const float k = (float)h / 720.0f;
+    memcpy(&words[CAPTURE_K], &k, 4);
+    const char *mw = getenv("TOTK_CAPTURE_MIN_W");
+    const float min_w = mw && *mw ? (float)atof(mw) : 150.0f;
+    memcpy(&words[CAPTURE_MIN_W], &min_w, 4);
+    put_words(m, stub, words, sizeof words / 4, "UI capture stubs");
+    put_word(m, CAPTURE_SITE_A, 0x80000000u | branch_to(CAPTURE_SITE_A, stub), "UI capture kept texture");   /* bl A */
+    put_word(m, CAPTURE_SITE_B, 0x80000000u | branch_to(CAPTURE_SITE_B, stub + 4 * CAPTURE_STUB_B_AT), "UI capture pass");   /* bl B */
+    put_word(m, CAPTURE_SITE_B + 4, 0xd503201fu, "UI capture pass");   /* nop: B did the second move */
+    fprintf(stderr, "[botw] UI capture textures x%.2f for the %u-pixel canvas (panes %.0f layout units wide or more and under a quarter screen; "
+            "stubs at main+%#llx; TOTK_CAPTURE_RES=0 keeps 720p)\n", k, h, min_w, (unsigned long long)stub);
+}
 #endif
 
 /* TOTK_PCHTXT=<file> (runtime/pchtxt.h, the reader both games share), 1.9.0 and 1.6.0 (1.6.0 untested: no 1.6.0 game
@@ -1143,6 +1325,7 @@ void runtime_game_patches(Module *m) {
     patch_fov(m);
 #endif
     patch_font_size(m);
+    patch_capture_res(m);   /* after patch_font_size: its stubs follow the typing-speed stub */
     botw_aspect_install(m);
     botw_vr_camera_install(m);
     botw_vr_projection_install(m);
@@ -1735,10 +1918,22 @@ static void output_mfx_off(void) {   /* a start above 1080p turns MetalFX 2K off
     dm_gfx_set_flag("mfx_output", 0); dm_gfx_set_flag("mfx_upscale", 0);
 }
 #endif
+#ifndef GAME_BOTW160
+/* MetalFX on a canvas above 1080p is a picture mode only when that canvas is native + MetalFX's own (2560x1440,
+   runtime_output_native); MetalFX 2K scales the 1080p canvas. */
+static int output_mfx_canvas(void) {
+    uint64_t c = atomic_load(&g_out_cur);
+    unsigned w, h;
+    return (uint32_t)c <= 1920 ||
+           (runtime_output_native(OUTPUT_MODE_NATIVE_METALFX, &w, &h) && w == (uint32_t)c && h == (uint32_t)(c >> 32));
+}
+#endif
 /* At the first present: once the framework has made the swapchain from the static, the static follows the canvas (the
-   dungeon map and the noise gauge scale by it every call). On 1.9.0 a start above 1080p (1440p, screen, a fixed size)
-   also turns off MetalFX 2K, which TOTK_MFX_OUTPUT / TOTK_MFX_UPSCALE may have turned on, so the panel starts from the
-   native size (1.6.0 keeps upstream's start). */
+   dungeon map and the noise gauge scale by it every call). On 1.9.0 MetalFX, which TOTK_MFX_OUTPUT / TOTK_MFX_UPSCALE or
+   the saved picture mode may have turned on, stays on only when the canvas it scales belongs to a picture mode
+   (output_mfx_canvas): a start above 1080p from 1440p, the screen or a fixed size turns it off, so the panel starts from
+   the native size, and a saved "native 2K + MetalFX" (2560x1440) keeps it (#1806: the old "above 1920 wide" test predates
+   that mode and turned it off at every start). 1.6.0 keeps upstream's start. */
 static void botw_output_tick(void) {
 #ifdef GAME_BOTW160
     if(g_out_vr){runtime_vr_render_apply_pending();return;}
@@ -1748,7 +1943,7 @@ static void botw_output_tick(void) {
     done = 1;
     if (g_out_mode == OUT_AUTO) output_static();
 #ifndef GAME_BOTW160
-    if ((uint32_t)atomic_load(&g_out_cur) > 1920) output_mfx_off();
+    if (!output_mfx_canvas()) output_mfx_off();
 #endif
 }
 #ifdef GAME_BOTW160

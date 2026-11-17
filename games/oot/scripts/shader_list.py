@@ -319,6 +319,38 @@ class ShaderList:
         old = self.warm.get(row, '')
         self.warm[row] = ''.join(f for f in 'tm' if f in old + flag)
 
+    def title_keys(self):
+        """The shaders (64-hex keys) the title rows name: what a quick build translates (games/oot/build.py, user
+        2026-11-13: "就带上 菜单的 着色器就行")."""
+        return {name[:64] for row, flags in self.warm.items() if 't' in flags for name in row_variants(row) if KEY.match(name[:64])}
+
+    QUICK_KINDS = ('C', 'T', 'M')
+
+    def quick_keys(self):
+        """What a quick build translates: the title rows' shaders and those of every compute (C), tile-read (T) and mesh
+        (M) row, so its packaging warms those pipelines into the pipeline archive (user 2026-11-15: "快速启动 默认 预热
+        网格管线", then the same for C and T; a quick App compiled every mesh pipeline at its first draw, a cold world
+        entry 32 of them in 75 s). The plain render (R) rows stay the title's only: 35,294 of them."""
+        rest = {name[:64] for row in self.warm if row[0] in self.QUICK_KINDS for name in row_variants(row) if KEY.match(name[:64])}
+        return self.title_keys() | rest
+
+    def only(self, keys):
+        """A copy holding only these shaders' rows: their V and L rows, and the warm rows every shader of which is one of
+        them (with the A rows those name). The seed of a quick build is translated from it (prepare_ns2_seed.py --only)."""
+        keys = set(keys)
+        part = ShaderList()
+        part.path = self.path
+        for key, deps in self.variants:
+            if key in keys:
+                part.add_variant(key, deps)
+        part.locators = {where for where in self.locators if where[0] in keys}
+        part.answers.update(self.answers)   # save writes only the ones a kept warm row names
+        for row, flags in self.warm.items():
+            names = row_variants(row)
+            if names and all(name[:64] in keys for name in names):
+                part.warm[row] = flags
+        return part
+
     def add_cache(self, folder):
         for index in sorted(Path(folder).glob('*.variants')):
             if not KEY.match(index.stem):

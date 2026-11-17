@@ -16,7 +16,7 @@ import threading
 import time
 
 from tools.builder import progress as parse
-from tools.builder_jobs import history, repo
+from tools.builder_jobs import history, repo, shared
 from tools.builder_jobs.events import Emitter
 from tools.builder_jobs.text import t
 
@@ -29,8 +29,65 @@ class Refused(Exception):
     pass
 
 
-def command(request):
-    """(build_app.py arguments, work folder, app path) for a request {plan, output_dir, work_root, platform}."""
+def express_plan(app, python=sys.executable, work=None, quick=False):
+    """update_runtime.py --plan for an installed app (tools/builder_jobs/installed.py asks the same). quick: asked for a
+    快速启动, whose update makes only the title's shaders again, so a new translator or chain needs no full build for it
+    (games/oot/build.py update_blocker 'title')."""
+    from tools.builder_jobs.installed import plan
+    if quick:
+        return plan(app, python, work, env={**os.environ, 'OOT_SHADERS': 'title'})
+    return plan(app, python, work) if work else plan(app, python)
+
+
+def same_version(plan, update_plan):
+    """Whether the dropped files are of the installed app's game version, so an update of the app is the same build. Only
+    when it is known: a card image without [vNNN] in its name, or files of another version, take the full build."""
+    if update_plan.get('game') != plan.get('game'):
+        return False
+    if plan['game'] == 'oot':   # one version is built (131072), checked by the build itself
+        return True
+    if plan['game'] == 'worldend':
+        return update_plan.get('version') == 'v0' and not plan.get('update')
+    if plan['game'] == 'dread':
+        expected = 327680 if update_plan.get('version') == 'v210' else 0 if update_plan.get('version') == 'v100' else None
+        return expected is not None and (plan.get('update_version') if plan.get('update') else 0) == expected
+    if plan['game'] == 'ss':
+        return update_plan.get('version') == 'v65536' and plan.get('update_version') == 65536
+    app_version = repo.build_app().VERSIONS.get(update_plan.get('version') or '', {}).get('version')
+    dropped = plan.get('update_version') if plan.get('update') else 0
+    return dropped is not None and app_version is not None and str(app_version) == str(dropped)
+
+
+def command(request, python=sys.executable):
+    """(script, arguments, work folder, app path, kind, game) for a request, kind being express, fast or full (the three updates
+    of docs/install.md, the fastest that fits; user 2026-11-12: "不要用最慢的形式打包"):
+      {update: <app>, shaders: true}                  only its shaders and pipelines, from the newest list: shader_update.py
+      {update: <app>, work?}                          an installed app, without files: update_runtime.py [--seed]
+                                                      [--work <work>] (a work folder moved on the Storage page;
+                                                      the app records it from then on)
+      {plan, output_dir, work_root, platform, app?}   dropped files: into app (an installed one of that game) or
+                                                      <output_dir>/<name>.app; an update when that app is there, of the
+                                                      same version, and an update fits; else build_app.py
+    The work folder is the one the app records, else work_root/<game>, else build_app.default_work (the one rule of
+    build_app.py, update_runtime.py and the Launcher)."""
+    b = repo.build_app()
+    if request.get('update') and request.get('shaders'):   # only the shaders and pipelines (shader_update.py)
+        app = Path(request['update']).expanduser()
+        up = express_plan(app, python)
+        if not up.get('work'):
+            raise Refused(up.get('reason') or t('the app records no work folder', '这个 App 没有记录工作文件夹'))
+        return repo.SHADER_UPDATE, [str(app)], Path(up['work']), app, 'shaders', up.get('game')
+    if request.get('update'):
+        app = Path(request['update']).expanduser()
+        given = request.get('work')
+        up = express_plan(app, python, given, quick=bool(request.get('quick')))   # 快速启动 from a card: the same quick build
+        if up['kind'] == 'full':
+            raise Refused(t(f'this app needs a full build: {up["reason"]}. Drop its game files in step 1',
+                            f'这个 App 要完整打包：{up["reason"]}。请在第一步拖入它的游戏文件'))
+        if up['kind'] not in ('express', 'fast'):
+            raise Refused(up['reason'])
+        argv = [str(app)] + (['--seed'] if up['kind'] == 'fast' else []) + (['--work', str(given)] if given else [])
+        return repo.UPDATE_RUNTIME, argv, Path(up['work']), app, up['kind'], up.get('game')
     plan = request['plan']
     if plan.get('blocks'):
         raise Refused(plan['blocks'][0])
@@ -39,26 +96,29 @@ def command(request):
     platform = request.get('platform', 'macos')
     if platform != 'macos':
         raise Refused(t('this builder makes Mac apps so far', '这个打包器目前只打 Mac 包'))
-    out = Path(request['output_dir']).expanduser() / f'{repo.GAMES[plan["game"]]}.app'
-    work = Path(request['work_root']).expanduser() / plan['game']
-    if out.is_dir():   # an app built before: its own work folder, so the build reuses its files (express update rule)
-        try:
-            work, _ = repo.build_app().recorded_work_folder(out, plan['game'])
-        except repo.build_app().BuildError:
-            pass
+    out = Path(request['app']).expanduser() if request.get('app') else \
+        Path(request['output_dir']).expanduser() / f'{repo.GAMES[plan["game"]]}.app'
+    work_root = (request.get('work_root') or '').strip()
+    work = b.default_work(out, plan['game'])[0] if out.is_dir() or not work_root else Path(work_root).expanduser() / plan['game']
+    if out.is_dir():
+        up = express_plan(out, python, quick=bool(request.get('quick')))
+        if up['kind'] in ('express', 'fast') and same_version(plan, up):
+            return (repo.UPDATE_RUNTIME, [str(out)] + (['--seed'] if up['kind'] == 'fast' else []), Path(up['work']), out,
+                    up['kind'], plan['game'])
     argv = [plan['base']]
-    if plan.get('keys') and plan['game'] in ('totk', 'botw'):
+    if plan.get('keys') and plan['game'] in ('totk', 'botw', 'ss', 'dread', 'worldend'):
         argv += ['-k', plan['keys']]
     if plan.get('update'):
         argv += ['--update', plan['update']]
     for dlc in plan.get('dlc') or []:
         argv += ['--dlc', dlc]
-    if plan.get('firmware'):
+    if plan.get('firmware') and plan['game'] not in ('ss', 'worldend'):
         argv += ['--firmware', plan['firmware']]
-    elif plan.get('fonts'):
+    elif plan.get('fonts') and plan['game'] not in ('ss', 'worldend'):
         argv += ['--shared-fonts', plan['fonts']]
     argv += ['--work', str(work), '-o', str(out)]
-    return argv, work, out
+    script = repo.REPO/f'games/{plan["game"]}/build.py' if plan['game'] in ('ss', 'dread', 'worldend') else repo.BUILD_APP
+    return script, argv, work, out, 'full', plan['game']
 
 
 class Steps:
@@ -101,19 +161,47 @@ class Steps:
         return None
 
 
-def run(request, emit, history_dir, python=sys.executable, script=None):
-    argv, work, out = command(request)
-    game = request['plan']['game']
-    record = history.record_path(history_dir, game, 'macos')
+QUICK_GAMES = {'oot'}   # games whose build can carry only the title's shaders (games/oot/build.py shader_mode 'title')
+
+
+def job_env(request, game):
+    """The build's environment: this one's, and for a quick build (request quick: MNG Launcher's 快速启动, user 2026-11-13:
+    "就带上 菜单的 着色器就行") OOT_SHADERS=title, so the app carries only the title's shaders; its card then offers
+    补全着色器 (a shaders request), which makes it a full app."""
+    env = dict(os.environ)
+    if request.get('quick'):
+        if game not in QUICK_GAMES:
+            raise Refused(t('a quick start is only for Ocarina of Time so far', '快速启动目前只支持时之笛'))
+        env['OOT_SHADERS'] = 'title'
+    return env
+
+
+def run(request, emit, history_dir, python=sys.executable, script=None, record=None):
+    chosen, argv, work, out, kind, game = command(request, python)
+    env = job_env(request, game)
+    if record is not None:   # the shared record names the job for a window that did not start it (shared.py)
+        shared.describe(record, game=game, app=str(out), kind=kind)
+    home = Path(os.environ.get('MNG_HOME') or Path.home())
+    record_mods = None
+    if kind == 'full' and script is None:   # a real build (tests pass a script of their own): the Mods page's code patches
+        from tools.builder_jobs import code_mods
+        extra, record_mods = code_mods.compose(request.get('plan') or {}, home)
+        if extra:
+            at = argv.index('--work')
+            argv = argv[:at] + extra + argv[at:]
+    # each kind of update has its own measured history: an express update takes minutes, a full build much longer
+    record = history.record_path(history_dir, game, ('macos-quick' if request.get('quick') else
+                                                      'macos' if kind == 'full' else f'macos-{kind}'))
     estimator = history.Estimator(history.load(record))
     start = time.time()
     LOGS.mkdir(parents=True, exist_ok=True)
     keep = LOGS / f'builder-app-{game}-{time.strftime("%Y%m%d-%H%M%S")}.log'
-    script = script or repo.BUILD_APP
+    script = script or chosen
+    # steps_last: how many steps the same kind of build took on this Mac last time (the window says "N steps last time")
     emit('plan', game=game, app=str(out), work=str(work), log=str(keep), measured=estimator.last is not None,
-         command=[str(script), *argv])
+         command=[str(script), *argv], kind=kind, steps_last=len(estimator.last) if estimator.last else None)
     proc = subprocess.Popen([python, '-u', str(script), *argv], cwd=repo.REPO, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, errors='replace', start_new_session=True)
+                            stderr=subprocess.STDOUT, text=True, errors='replace', start_new_session=True, env=env)
     cancelled = threading.Event()
 
     def cancel(*_):
@@ -153,11 +241,12 @@ def run(request, emit, history_dir, python=sys.executable, script=None):
             if now - last >= 1:
                 last = now
                 since = now - seen[-1][1] if seen else 0
-                fraction, left, measured = estimator.update(state['step'], since, state['stage'])
                 counted = steps.count(state['step']) if state['step'] else None
+                fraction, left, measured, step_left = estimator.update(state['step'], since, state['stage'], counted)
                 emit('progress', fraction=round(fraction, 4), left=None if left is None else round(left),
                      elapsed=round(now - start), measured=measured,
-                     step_done=counted and counted[0], step_total=counted and counted[1])
+                     step_done=counted and counted[0], step_total=counted and counted[1],
+                     step_left=None if step_left is None else round(step_left))
             time.sleep(0.25)
     ticker = threading.Thread(target=tick, daemon=True)
     ticker.start()
@@ -187,22 +276,50 @@ def run(request, emit, history_dir, python=sys.executable, script=None):
     end = time.time()
     if code == 0:
         history.record(record, steps.poll(end), end)
+        if record_mods:
+            record_mods(out)
         emit('progress', fraction=1.0, left=0, elapsed=round(end - start), measured=True)
-        emit('done', ok=True, app=str(out), elapsed=round(end - start))
+        emit('done', ok=True, app=str(out), elapsed=round(end - start), note=mods_note(game, out, True, ''))
         return 0
     message = error[0] if error else (t(f'the build was cancelled (exit {code})', f'打包已停止（退出码 {code}）')
                                       if cancelled.is_set() else
-                                      t(f'build_app.py stopped (exit {code})', f'build_app.py 停下了（退出码 {code}）'))
+                                      t(f'{Path(script).name} stopped (exit {code})', f'{Path(script).name} 停下了（退出码 {code}）'))
     emit('done', ok=False, cancelled=cancelled.is_set(), message=message, detail='\n'.join(error[1:])[-6000:],
-         step_log=failed_log, log=str(keep), elapsed=round(end - start))
+         step_log=failed_log, log=str(keep), elapsed=round(end - start),
+         note=mods_note(game, out, False, '\n'.join(error)) if kind == 'full' else '')
     return code or 1
 
 
+def mods_note(game, app, ok, error):
+    """The Mods page's line after a build of this app (tab_mods.after_build): a code patch for another build stopped it,
+    or the applied mods no longer fit the new app; '' for other games or when there is nothing to say."""
+    if game not in ('totk', 'botw') or not Path(app).is_dir():
+        return ''
+    from tools.builder_jobs.tabs import call
+    answer = call('mods', 'after_build', app, {'ok': ok, 'error': error}, os.environ.get('MNG_HOME'))
+    return (answer.get('result') or {}).get('note', '') if answer.get('ok') else ''
+
+
+def start(request, stream, history_dir, source=None):
+    """Run one request as the Mac's one job (shared.claim), its events into stream and current.ndjson; the exit code.
+    source says who started it, for whoever else looks (MNG_JOB_SOURCE: the window sets launcher:<pid>)."""
+    source = source or os.environ.get('MNG_JOB_SOURCE') or 'the command line'
+    try:
+        with shared.claim(stream, source) as (tee, record):
+            try:
+                return run(request, Emitter(tee), history_dir, record=record)
+            except (Refused, OSError, ValueError, KeyError) as e:
+                Emitter(tee)('done', ok=False, cancelled=False, message=str(e), detail='', step_log=None, log=None, elapsed=0)
+                return 2
+    except shared.Busy as e:
+        Emitter(stream)('done', ok=False, cancelled=False, message=str(e), detail='', step_log=None, log=None, elapsed=0, busy=True)
+        return 3
+
+
 def main(request_path, history_dir):
-    emit = Emitter(sys.stdout)
     try:
         request = json.loads(Path(request_path).read_text())
-        return run(request, emit, history_dir)
-    except (Refused, OSError, ValueError, KeyError) as e:
-        emit('done', ok=False, cancelled=False, message=str(e), detail='', step_log=None, log=None, elapsed=0)
+    except (OSError, ValueError) as e:
+        Emitter(sys.stdout)('done', ok=False, cancelled=False, message=str(e), detail='', step_log=None, log=None, elapsed=0)
         return 2
+    return start(request, sys.stdout, history_dir)

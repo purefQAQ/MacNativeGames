@@ -15,8 +15,12 @@ final class Model: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var stage = ""
     @Published var stageText = ""
+    @Published var stageNumber: (Int, Int)?   // build_app.py's 'i/4' stage: (i, 4)
     @Published var step = ""
+    @Published var stepIndex = 0              // the running step's number (its log is the n-th the build started)
+    @Published var stepsLast: Int?            // the steps the same kind of build took on this Mac last time
     @Published var stepCount: (Int, Int)?
+    @Published var stepLeft: Double?      // the running step's seconds left (its counter's rate, else last time)
     @Published var fraction = 0.0
     @Published var left: Double?
     @Published var elapsed = 0.0
@@ -24,19 +28,104 @@ final class Model: ObservableObject {
     @Published var lines: [String] = []
     @Published var failure: BuildEvent?
     @Published var appPath: String?
+    @Published var note = ""            // the Mods page's line after a build (a code patch, mods to apply again)
+    @Published var installed: [InstalledReport.App] = []
+    @Published var installedLoaded = false   // the first scan finished: until then no game is shown as missing
+    @Published var installedError: String?   // why the last scan failed (the home page shows it)
+    @Published var updating: String?     // the installed app being updated (its progress shows in its list)
+    /// A job is running now. `updating` names the app the last job was for and stays after it ends (its card keeps the
+    /// result and the log), so it never means "busy": a reporter (2026-11-17) found Start grey after a `mng.py build`
+    /// until the Launcher was reopened, and the Storage page's buttons stayed off the same way.
+    var jobRunning: Bool { phase == .building || phase == .cancelling }
+    @Published var kind = "full"         // express, fast or full: what the running job does
+    @Published var page = "home"         // the page shown: home (the games) or build
+    @Published var buildFor: String?     // the game a card's plus chose for the Build page (its files go to step 1)
+    @Published var quickStart = false    // 快速启动: build with only the title's shaders (Model.quickGames)
+    /// The log of the job that failed last, which the terminal page's AI is asked about.
+    var failureLog: String? { failure.flatMap { $0.step_log ?? $0.log } }
     @Published var outputDir: String { didSet { save() } }
     @Published var workRoot: String { didSet { save(); Task { await runChecks() } } }
 
     private var job: Job?
+    // A build or update started elsewhere (tools/mng.py in a terminal, an AI): followed through tools/builder_jobs/shared.py
+    @Published var externalSource: String?
+    @Published var startedHere = true   // false for a job another program started: its end starts no game
+    private var externalPid: pid_t = 0
+    private var eventsPath: String?
+    private var offset: UInt64 = 0
+    private var pending = Data()
+    private var watcher: Timer?
+    private var follower: Timer?
     private let defaults = UserDefaults.standard
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         outputDir = defaults.string(forKey: "outputDir") ?? home + "/Applications"
-        workRoot = defaults.string(forKey: "workRoot") ?? Paths.support.appendingPathComponent("work").path
+        // Empty: the one folder rule (build_app.default_work, MacNativeGames-work beside the apps folder). The window's
+        // first default (Application Support/…/Builder/work) counts as empty, so its apps keep the folder they record.
+        let saved = defaults.string(forKey: "workRoot") ?? ""
+        workRoot = saved == Paths.support.appendingPathComponent("work").path ? "" : saved
         paths = defaults.stringArray(forKey: "paths") ?? []
         keysPath = defaults.string(forKey: "keys")
-        Task { await runChecks(); if !paths.isEmpty { await classify() } }
+        NotificationCenter.default.addObserver(forName: .mngOpenFiles, object: nil, queue: .main) { [weak self] note in
+            let urls = note.object as? [URL] ?? []
+            Task { @MainActor in self?.open(urls) }
+        }
+        let pending = Delegate.pending; Delegate.pending = []
+        watcher = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.lookForExternal() }
+        }
+        loadRememberedInstalled()   // the games of the last look at once; the look below brings them up to date
+        Task { await runChecks(); await loadInstalled(); open(pending); if !paths.isEmpty { await classify() } }
+    }
+
+    /// Files given to the app (open -a "MNG Launcher" <files>, or dropped on its icon): keys go to step 2, the rest to
+    /// step 1, so a player's AI can start the Launcher with everything filled in.
+    func open(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let keys = urls.filter { $0.pathExtension.lowercased() == "keys" }
+        if let k = keys.last { keysPath = k.path }
+        let rest = urls.filter { $0.pathExtension.lowercased() != "keys" }
+        if !rest.isEmpty { paths = rest.map { $0.path } }
+        page = "build"   // files given to the app (open -a, the Dock): the steps they fill in
+        save()
+        Task { await classify() }
+    }
+
+    /// The pages besides building each game has (tools/builder/games.py PAGES, which the backend enforces;
+    /// tests/test_launcher_pages.py checks the two agree). Ocarina of Time: Controls, Storage and Saves (user 2026-11-13).
+    /// 诊断模式 was removed 2026-11-15: a quick App starts with every diagnostic itself (games/oot/app/launcher.m).
+    static let gamePages: [String: [String]] = [
+        "totk": ["settings", "mods", "controls", "storage", "saves"],
+        "botw": ["settings", "mods", "controls", "storage", "saves"],
+        "oot": ["controls", "storage", "saves"],
+    ]
+    static func pages(_ game: String?) -> [String] { game.flatMap { gamePages[$0] } ?? [] }
+    /// The installed apps the pages besides building serve.
+    var pageApps: [InstalledReport.App] { installed.filter { !Model.pages($0.game).isEmpty } }
+
+    /// Where the last look at the installed games is kept, so the games page shows them at once (user 2026-11-12).
+    private static let rememberedInstalled = Paths.support.appendingPathComponent("installed.json")
+
+    /// The games of the last look that are still there; nothing when there was none (the page then waits for the look).
+    private func loadRememberedInstalled() {
+        guard let data = try? Data(contentsOf: Self.rememberedInstalled),
+              let report = try? JSONDecoder().decode(InstalledReport.self, from: data) else { return }
+        installed = report.apps.filter { FileManager.default.fileExists(atPath: $0.app) }
+        installedLoaded = true
+    }
+
+    func loadInstalled() async {
+        do {
+            let data = try await Job.collect(["apps", "--apps-dir", outputDir])
+            installed = try JSONDecoder().decode(InstalledReport.self, from: data).apps
+            installedError = nil
+            try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
+            try? data.write(to: Self.rememberedInstalled, options: .atomic)
+        } catch {
+            installedError = error.localizedDescription   // the games of the last look stay; the page says why this failed
+        }
+        installedLoaded = true
     }
 
     private func save() {
@@ -55,6 +144,7 @@ final class Model: ObservableObject {
     /// The app a build of the current plan writes, when it is already there.
     var existingApp: String? {
         guard let name = plan?.app_name else { return nil }
+        if let game = plan?.game, let app = installed.first(where: { $0.game == game })?.app { return app }
         let path = (outputDir as NSString).appendingPathComponent(name + ".app")
         return FileManager.default.fileExists(atPath: path) ? path : nil
     }
@@ -104,14 +194,11 @@ final class Model: ObservableObject {
         }
     }
 
-    /// The fix of a check that a click can start: the developer tools' installer, or Homebrew's packages (whose
-    /// output goes to the log). Others show their command to copy.
+    /// The fix of a check that a click can start: the developer tools' installer. Others show their command to copy.
     func fix(_ check: ChecksReport.Check) {
         switch check.action {
         case "install-clt":
             run("/usr/bin/xcode-select", ["--install"])
-        case "brew-install":
-            run("/opt/homebrew/bin/brew", ["install", "opus", "libvpx"])
         default:
             if let fix = check.fix { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(fix, forType: .string) }
         }
@@ -134,7 +221,46 @@ final class Model: ObservableObject {
 
     func build() {
         guard let plan, canBuild else { return }
-        let request = BuildRequest(plan: plan, output_dir: outputDir, work_root: workRoot, platform: "macos")
+        // an installed app of this game is built into where it is, with the work folder it records
+        let installedApp = plan.game.flatMap { g in installed.first(where: { $0.game == g })?.app }
+        updating = nil
+        let quick = quickStart && Model.quickGames.contains(plan.game ?? "")
+        start(BuildRequest(plan: plan, output_dir: outputDir, work_root: workRoot, platform: "macos", app: installedApp,
+                           quick: quick ? true : nil))
+    }
+    /// The games a build can make quick: only the title's shaders, the rest translated at first use (user 2026-11-13).
+    static let quickGames: Set<String> = ["oot"]
+
+    /// 快速启动 of an installed app (its card; user 2026-11-15: after the game's pages, one function with the Build page's switch):
+    /// the same quick request, so the app is made again with only the title's shaders, also when a new translator would
+    /// otherwise need the full build. 补全着色器 on its card makes it full later.
+    func quickStart(_ app: InstalledReport.App) {
+        guard phase != .building && phase != .cancelling else { return }
+        updating = app.app
+        start(BuildRequest(update: app.app, quick: true))
+    }
+
+    /// An installed app, without files: the fastest update that fits (express, else fast; the job refuses a full one).
+    func update(_ app: InstalledReport.App) { update(path: app.app) }
+
+    /// Only the shaders and pipelines the game's newest shared list adds (shader_update.py; user 2026-11-13).
+    func updateShaders(_ app: InstalledReport.App) {
+        guard phase != .building && phase != .cancelling else { return }
+        updating = app.app
+        start(BuildRequest(update: app.app, shaders: true))
+    }
+    /// The games whose shaders the Check shaders button compares with their newest list (shader_update.py LISTS).
+    static let shaderGames: Set<String> = ["totk", "botw", "oot"]
+
+    /// work: a folder the Storage page moved the work folder to; the update records it in the app.
+    func update(path: String, work: String? = nil) {
+        guard phase != .building && phase != .cancelling else { return }
+        updating = path
+        start(BuildRequest(update: path, work: work))
+    }
+
+    private func start(_ request: BuildRequest) {
+        startedHere = true
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("mng-build-request.json")
         do {
             try FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
@@ -143,6 +269,7 @@ final class Model: ObservableObject {
             failure = nil; lines = [error.localizedDescription]; phase = .failed; return
         }
         phase = .building; stage = ""; stageText = ""; step = ""; fraction = 0; left = nil; elapsed = 0; lines = []; failure = nil
+        stageNumber = nil; stepIndex = 0; stepsLast = nil; stepCount = nil; stepLeft = nil
         do {
             job = try Job(["build", file.path], onLine: { [weak self] in self?.handle($0) },
                           ended: { [weak self] code in self?.ended(code) })
@@ -151,24 +278,78 @@ final class Model: ObservableObject {
         }
     }
 
-    func cancel() { job?.cancel(); phase = .cancelling }
+    func cancel() {
+        if externalSource != nil, externalPid > 0 { kill(externalPid, SIGINT) } else { job?.cancel() }
+        phase = .cancelling
+    }
+
+    /// The Mac's one job, when another program started it: its record (Builder/jobs/current.json) names its pid and its
+    /// events file, which is read from the start and followed, so the window shows it as its own and can stop it.
+    func lookForExternal() {
+        guard job == nil, externalSource == nil, phase != .building, phase != .cancelling else { return }
+        let jobs = Paths.support.appendingPathComponent("jobs")
+        guard let data = try? Data(contentsOf: jobs.appendingPathComponent("current.json")),
+              let r = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid = r["pid"] as? Int, kill(pid_t(pid), 0) == 0,
+              (r["source"] as? String) != Job.source else { return }
+        externalPid = pid_t(pid); externalSource = r["source"] as? String ?? "?"; startedHere = false
+        eventsPath = r["events"] as? String; offset = 0; pending = Data()
+        updating = r["app"] as? String ?? externalSource
+        phase = .building; stage = ""; stageText = ""; step = ""; fraction = 0; left = nil; elapsed = 0; lines = []
+        stageNumber = nil; stepIndex = 0; stepsLast = nil; stepCount = nil; stepLeft = nil
+        failure = nil; note = ""
+        follower = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.readExternal() }
+        }
+    }
+
+    private func readExternal() {
+        guard let path = eventsPath else { return endExternal() }
+        // the file becomes last.ndjson when the job ends: read what is left from there
+        let last = (path as NSString).deletingLastPathComponent + "/last.ndjson"
+        if let h = FileHandle(forReadingAtPath: path) ?? FileHandle(forReadingAtPath: last) {
+            try? h.seek(toOffset: offset)
+            let data = h.readDataToEndOfFile(); try? h.close()
+            offset += UInt64(data.count); pending.append(data)
+            while let nl = pending.firstIndex(of: 0x0A) {
+                let line = String(decoding: pending[pending.startIndex..<nl], as: UTF8.self)
+                pending.removeSubrange(pending.startIndex...nl)
+                handle(line)
+            }
+        }
+        if phase != .building && phase != .cancelling { return endExternal() }
+        if kill(externalPid, 0) != 0 && !FileManager.default.fileExists(atPath: path) {
+            phase = .failed; endExternal()   // gone without its done line
+        }
+    }
+
+    private func endExternal() {
+        follower?.invalidate(); follower = nil
+        externalSource = nil; externalPid = 0; eventsPath = nil
+        Task { await loadInstalled() }
+    }
 
     private func handle(_ line: String) {
         guard let data = line.data(using: .utf8), let e = try? JSONDecoder().decode(BuildEvent.self, from: data) else {
             append(line); return
         }
         switch e.event {
-        case "plan": measured = e.measured ?? false; appPath = e.app
-        case "stage": stage = T.stage(e.name ?? ""); stageText = e.text ?? ""; append("— " + (e.text ?? ""))
-        case "step": step = e.name ?? ""; stepCount = nil
+        case "plan": measured = e.measured ?? false; appPath = e.app; kind = e.kind ?? "full"; stepsLast = e.steps_last
+        case "stage":
+            stage = T.stage(e.name ?? ""); stageText = e.text ?? ""; append("— " + (e.text ?? ""))
+            if let i = e.index, let n = e.total { stageNumber = (i, n) }
+        case "step": step = e.name ?? ""; stepIndex = e.index ?? stepIndex + 1; stepCount = nil; stepLeft = nil
         case "progress":
             fraction = e.fraction ?? fraction; left = e.left; elapsed = e.elapsed ?? elapsed; measured = e.measured ?? measured
             if let d = e.step_done, let t = e.step_total { stepCount = (d, t) } else { stepCount = nil }
+            stepLeft = e.step_left
         case "log": append(e.text ?? "")
         case "cancelling": phase = .cancelling
         case "done":
+            note = e.note ?? ""
             if e.ok == true {
-                phase = .done; fraction = 1; appPath = e.app ?? appPath; play()
+                phase = .done; fraction = 1; appPath = e.app ?? appPath
+                if startedHere { play() }   // a job started elsewhere ends without starting the game
             } else {
                 failure = e; phase = (e.cancelled ?? false) ? .cancelled : .failed
             }
@@ -186,6 +367,7 @@ final class Model: ObservableObject {
         if phase == .building || phase == .cancelling {   // the job ended without its 'done' line
             phase = code == 0 ? .done : .failed
         }
+        Task { await loadInstalled() }   // an app was made or updated: what it needs now
     }
 
     func play() {

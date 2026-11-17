@@ -36,6 +36,7 @@ class Plan:
     app_name: str | None = None
     base: str | None = None
     update: str | None = None
+    update_version: int | None = None   # the chosen update's title version, to tell an installed app of the same version
     dlc: list = field(default_factory=list)
     keys: str | None = None
     firmware: str | None = None
@@ -59,7 +60,7 @@ def _keys(path):
     except OSError as e:
         return Item(str(path), 'ignored', note=t(f'cannot be read: {e.strerror}', f'读不了：{e.strerror}'))
     if not _HEADER_KEY.search(text):
-        return Item(str(path), 'ignored', note=t('a keys file without header_key: dump prod.keys again from your Switch', '没有 header_key 的 keys 文件：从 Switch 重新导出 prod.keys'))
+        return Item(str(path), 'ignored', note=t('a keys file without header_key: not a complete keys file', '没有 header_key 的 keys 文件：不是完整的 keys 文件'))
     return Item(str(path), 'keys')
 
 
@@ -103,6 +104,10 @@ def _package(path):
 def _folder(path):
     """A Switch 2 dump, a firmware or a shared-fonts folder, or None for a folder to look into."""
     b = repo.build_app()
+    if (path/'ExeFS/main.npdm').is_file() and (path/'RomFS').is_dir():
+        title = b.npdm_program_id(path/'ExeFS/main.npdm')
+        if title == '01002DA013484000':
+            return Item(str(path), 'ss_dump', game='ss', title=title, version=65536)
     if (path / 'base').is_dir() or (path / 'updates').is_dir():
         npdm = b.ns2_dump_exefs(path) / 'main.npdm'
         title = b.npdm_program_id(npdm) if npdm.is_file() else None
@@ -165,6 +170,12 @@ def _newest(items):
 
 def _supported(game):
     """The title versions of game build_app.py has verified values for (its VERSIONS), the base's 0 included."""
+    if game == 'ss':
+        return {65536}
+    if game == 'dread':
+        return {0, 327680}
+    if game == 'worldend':
+        return {0}
     return {int(v['version']) for v in repo.build_app().VERSIONS.values()
             if str(v.get('version', '')).isdigit() and repo.game_of_title(str(v.get('title_id', '0' * 16))) == game}
 
@@ -175,7 +186,7 @@ def plan(items, work=None):
     by_role = lambda role, game=None: [i for i in items if i.role == role and (game is None or i.game in (game, None))]
     keys = by_role('keys')
     p.keys = keys[-1].path if keys else None
-    bases = [i for i in items if i.role in ('base', 'ns2_dump', 'nup')]
+    bases = [i for i in items if i.role in ('base', 'ns2_dump', 'nup', 'ss_dump')]
     p.games_found = sorted({i.game for i in items if i.game})
     known = [i for i in bases if i.game]
     if len({i.game for i in known}) > 1:
@@ -192,13 +203,18 @@ def plan(items, work=None):
         return p
     p.base, p.game = base.path, base.game
     p.app_name = repo.GAMES.get(base.game) if base.game else None
-    if base.role in ('ns2_dump', 'nup'):
+    if base.role in ('ns2_dump', 'nup', 'ss_dump'):
         p.needs_keys = False
+        if base.role == 'ss_dump':
+            p.update_version = 65536
         p.fonts = (by_role('fonts') or [Item('', '')])[-1].path or None
-        if base.game == 'oot' and not p.fonts:
-            p.notes.append(t('Ocarina of Time needs the six shared-font files of a Switch 2 firmware unless your work folder '
-                             'already has them: drop their folder too',
-                             '时之笛需要 Switch 2 固件的六个系统字体文件（工作目录里已有就不用）：把它们的文件夹也放进来'))
+        # a Switch 2 dump holds no fonts: games/oot/build.py prepare_fonts and build_app.py main_ns2 take open-source ones
+        if base.role in ('ns2_dump', 'nup') and not p.fonts:
+            p.notes.append(t('no system fonts given: the build uses open-source Noto fonts (downloaded once) unless your work '
+                             'folder already has fonts; to use the firmware fonts of a Tears of the Kingdom or Breath of the '
+                             'Wild build, drop their shared-fonts folder too',
+                             '没有放系统字体：打包会用开源的 Noto 字体（只下载一次），工作目录里已有字体就用已有的；'
+                             '想用王国之泪或旷野之息打包留下的固件字体，把那个 shared-fonts 文件夹也放进来'))
         return p
     if not p.keys:
         p.keys_problems.append(t('no keys: choose the prod.keys dumped from your Switch', '还没有 keys：选择从你的 Switch 导出的 prod.keys'))
@@ -219,7 +235,8 @@ def plan(items, work=None):
     if updates:
         supported = _supported(p.game)
         usable = [u for u in updates if u.version in supported] or updates
-        p.update = _newest(usable).path
+        newest = _newest(usable)
+        p.update, p.update_version = newest.path, newest.version
         skipped = [Path(u.path).name for u in updates if u not in usable]
         if skipped:
             p.notes.append(t('not a version this repository builds, left out: ', '本项目不支持的版本，不用：') + ', '.join(skipped))
@@ -231,10 +248,17 @@ def plan(items, work=None):
     p.fonts = fonts[-1].path if fonts else None
     b = repo.build_app()
     has_fonts = p.firmware or p.fonts or (work and b.fonts_valid(Path(work) / 'totk/extracted/firmware/shared-fonts'))
-    if GAME_SUFFIXES.get(Path(p.base).suffix.lower()) == 'nsp' and not has_fonts:
-        p.blocks.append(t('an NSP holds no system fonts: drop your unpacked firmware folder (or the shared-fonts folder of '
+    # build_app.py: an NSP holds no system fonts, nor does a Breath of the Wild card image (step_data_botw)
+    if p.game not in ('ss', 'dread', 'worldend') and (GAME_SUFFIXES.get(Path(p.base).suffix.lower()) == 'nsp' or p.game == 'botw') and not has_fonts:
+        p.blocks.append(t('this game file holds no system fonts (an NSP, or a Breath of the Wild card): drop your unpacked firmware folder (or the shared-fonts folder of '
                           'an earlier build) too',
-                          'NSP 不含系统字体：把解开的固件文件夹（或以前打包留下的 shared-fonts 文件夹）也放进来'))
+                          '这个游戏文件不含系统字体（NSP，或旷野之息的卡带）：把解开的固件文件夹（或以前打包留下的 shared-fonts 文件夹）也放进来'))
+    if p.game == 'ss' and (not p.update or p.update_version not in (None, 65536)):
+        p.blocks.append(t('Skyward Sword HD needs update 1.0.1 (v65536)', '天空之剑 HD 需要 1.0.1 更新（v65536）'))
+    if p.game in ('dread', 'worldend') and p.dlc:
+        p.blocks.append(t('This game does not accept add-on packages', '此游戏不接收附加内容包'))
+    if p.game == 'ss' and p.dlc:
+        p.blocks.append(t('Skyward Sword HD does not accept add-on packages', '天空之剑 HD 不接收附加内容包'))
     p.blocks = p.keys_problems + p.blocks
     return p
 

@@ -54,7 +54,7 @@ The launcher checks the file at every start and names the first bad line in an a
 
 **Mouse (Mac, the settings panel):** the settings panel's Mouse switch turns mouse mode on and off; the choice is kept for the next launch in `mouse.txt` next to `controls.txt`. While it is on and the game window is in front, the window holds the pointer (hidden, kept in the window); Command-Tab or the settings panel lets it go, and so does a text entry such as naming a horse. Moving the mouse turns the camera: it drives the right stick the way yuzu's "mouse panning" does (written anew here): movement adds to a stick deflection that a 10 ms tick shows to the game and then lets decay, so the camera keeps turning while the mouse moves and settles when it stops. The ability wheel (Tears of the Kingdom, L held: Q on the keyboard) is the exception: while L is held the stick stays where the mouse points it instead of settling back, so the ability it points at stays picked until L is let go; the stick is centred when the wheel opens and again when it closes, and meanwhile the mouse turns neither the camera nor the gyro. The same movement also turns the controller's gyro, so with motion controls on in the game's options, aiming a bow or Ultrahand follows the mouse directly; while mouse mode is on the mouse has the gyro to itself (a controller's motion comes back when it is off). Buttons: left attacks (Y), right draws the bow (ZR) and a left click while it is held shoots, the wheel click locks on (ZL); change them in the settings panel's **Key bindings** page like any key. **Mouse sensitivity** (the settings panel's Input page): a slider from 1 to 100, default 50 (20 points of movement is a full stick deflection), applied at once and kept in `mouse-sensitivity.txt`; it sets how fast the mouse turns the camera, separately from the game's own camera speed. `TOTK_MOUSE_SENSITIVITY` (1–100) decides over the slider, which then shows its value greyed out. Other settings: `TOTK_MOUSE_INVERT_Y=1`, `TOTK_MOUSE_COUNTERWEIGHT` (20: the smallest movement turns at least 20 % of the stick, past the game's dead zone), `TOTK_MOUSE_DECAY` (18) and `TOTK_MOUSE_MIN_DECAY` (6) for how fast the turn settles, `TOTK_MOUSE_GYRO=0` for the stick only.
 
-**Settings panel (Mac, key 1):** key **1** opens and closes the settings panel (Esc or its ✕ close it too; drag its background to move it, and it opens there next time). With a controller, **press both sticks in together (L3 + R3)** (Xbox: LS + RS) to open or close it; from there the game gets no controller input until both are let go. The **Key bindings** page's row *Open / close this panel* (the last but one) can give this to one button instead (the touchpad, say), kept in `controller-settings.txt` next to `controls.txt`; that button then drives nothing in the game, and clearing the row (right-click) or the controller reset brings back L3 + R3. The tabs at the top (or L1 / R1 on a controller) switch between five pages: **Display**, **Input**, **Effects**, **Key bindings** and **Update**; the page shown last opens again. On the Update page up / down scroll the text and left / right pick a button. In the panel the d-pad or left stick moves up and down the rows and left / right changes a value; A (× on PlayStation) picks, B (○) closes. While it is open neither the keyboard and mouse nor a controller reach the game; after it closes, the controller plays again once its buttons and sticks are released. The app's version and the commit it was built from are in the panel's bottom-left corner. Each choice applies at once.
+**Settings panel (Mac, key 1):** key **1** opens and closes the settings panel (Esc or its ✕ close it too; drag its background to move it, and it opens there next time). With a controller, **press both sticks in together (L3 + R3)** (Xbox: LS + RS) to open or close it; from there the game gets no controller input until both are let go. The **Key bindings** page's row *Open / close this panel* (the last but one) can give this to one button instead (the touchpad, say), kept in `controller-settings.txt` next to `controls.txt`; that button then drives nothing in the game, and clearing the row (right-click) or the controller reset brings back L3 + R3. The tabs at the top (or L1 / R1 on a controller) switch between the pages: **Display**, **Input**, **User**, **Effects**, **Key bindings**, **Shaders**, **Performance** and **Screenshots** (and **VR** while VR is on); the page shown last opens again. In the panel the d-pad or left stick moves up and down the rows and left / right changes a value; A (× on PlayStation) picks, B (○) closes. While it is open neither the keyboard and mouse nor a controller reach the game; after it closes, the controller plays again once its buttons and sticks are released. The app's version and the commit it was built from are in the panel's bottom-left corner. Each choice applies at once.
 
 Display:
 - **Overlay:** all (the box in the window's top-right corner: FPS with the output and, in brackets, the game's internal 3D resolution, e.g. `FPS 60  1920x1080 (1920x1080)`; shader and render pipeline counts; the load line, GPU first (the game's own share of the GPU), then the CPU cores; accumulated foreground playtime), FPS + playtime, or off. `TOTK_HUD=corners` puts the readings in the picture's corners instead.
@@ -67,7 +67,7 @@ Display:
 - **Edge smoothing (MetalFX Temporal):** temporal anti-aliasing of the 3D scene, off until enabled (`TOTK_TAA=1` starts it on; 1.4.3 and Breath of the Wild); `TOTK_ANISO=16` also turns on 16x anisotropic filtering.
 - **Anisotropic filtering:** off (the game's 1×), 2×, 4×, 8× or 16× for the ground, walls and foliage seen at a slant. Applies at once. Kept in `graphics-aniso.txt`; `TOTK_ANISO` decides first.
 - **Stronger ambient occlusion:** off by default. 1.5×, 2× or 3× deepens the soft shade the game puts in corners, crevices and where things meet the ground (its ambient occlusion: strength and radius both scaled; 1.5× is the tested level). Tears of the Kingdom 1.2.1 / 1.4.3 and Breath of the Wild 1.9.0 only. Every choice acts at once; off is the game's own shading, unchanged. Kept in `ssao.txt` (`off` or the percent, such as `150`); `TOTK_SSAO_STRENGTH` / `TOTK_SSAO_RADIUS` (percent) decide first, and `TOTK_SSAO=0` keeps the game's own shaders.
-- At the bottom right of the Display page, two buttons: **Contribute shaders and pipelines** sends the ones your game met that the shared list lacks (with the GitHub CLI `gh` when it is signed in, in the background; otherwise the GitHub form opens and Finder shows the file to drag in), and **Star the project** opens the GitHub page.
+- At the bottom right of the Display page, two buttons: **Contribute shaders and pipelines** opens the GitHub form for the ones your game met that the shared list lacks, and Finder shows the file to drag in, and **Star the project** opens the GitHub page.
 
 Input:
 - **Controller type:** auto (it says what it took the controller for, such as "Auto (PlayStation)"), Xbox, PlayStation or Switch. Xbox and PlayStation map the face buttons by position, Switch by label. Kept in `controller-type.txt` next to `controls.txt`; generic HID pads stay Switch-style. It does not change the button icons in the game's prompts (see `make_button_icons.py`).
@@ -112,9 +112,59 @@ Native 2K changes the game's composition canvas and UI to 2560×1440. The 3D sce
 
 Language: the game and the launcher's own text (startup screen, shader warm-up progress, overlays, keyboard prompt) follow the Mac's language. The launcher text is Chinese on a Chinese Mac and English otherwise. Regional variants follow the console: English outside the Americas (en-GB, en-AU, ...) selects British English, which shows temperatures in Celsius (American English shows Fahrenheit), French in Canada selects Canadian French, Spanish in the Americas Latin American Spanish, and in a 1.4.3 build Brazilian Portuguese selects the game's official pt-BR text. Simplified and Traditional Chinese are told apart by the script (zh-Hans / zh-Hant) or, without one, by the region (Taiwan, Hong Kong and Macau are Traditional). To give only this game another language, choose it in System Settings › General › Language & Region › Applications, or set its preferred language, for example `defaults write org.macnativegames.totk AppleLanguages -array pt-BR` (`defaults delete org.macnativegames.totk AppleLanguages` removes it). To override, launch with `TOTK_LANG` for the game (for example `open --env TOTK_LANG=en-US "Tears of the Kingdom.app"`) or `TOTK_UI_LANG=zh` / `en` for the launcher text.
 
+### DSU / Cemuhook input on Mac (optional)
+
+Tears of the Kingdom and Breath of the Wild can receive one controller's buttons,
+sticks and native six-axis motion from a DSU protocol 1001 server. This is off by
+default and does not depend on a controller brand. Press **1 → Input** and scroll
+to the DSU rows to enable it, edit `host:port` and select slot 0–3. DSU always
+receives buttons, sticks and motion. Changes apply immediately and are kept next
+to `controls.txt` in `dsu.txt` (`on`/`off`), `dsu-server.txt` and `dsu-slot.txt`.
+Turning DSU off restores the native controller motion source;
+rumble is not restarted by these changes. Hostname lookup runs off the UI thread.
+
+One status line shows the live connection state, buttons, both sticks,
+acceleration (g) and rotation (degrees/s).
+No controller data is shown while disconnected; stale motion shows no sensor values. The raw sensor readout remains available
+when gyro aiming is off. Values refresh twice a second. A socket waiting for data does
+not count as a connected controller.
+
+Alternatively, quit the game and override the saved preferences for one launch:
+
+```sh
+open --env TOTK_DSU=127.0.0.1:26760 --env TOTK_DSU_SLOT=0 "/Applications/Tears of the Kingdom.app"
+```
+
+- `TOTK_DSU=host:port` selects a server; `1` means `127.0.0.1:26760`. Hostnames and
+  bracketed IPv6 (`[::1]:26760`) are accepted. Empty or `0` disables DSU; unset
+  uses saved settings (off when never configured).
+- Either `TOTK_DSU` or `TOTK_DSU_SLOT` locks the DSU settings
+  for that launch; remove them and relaunch to edit the saved choices in the UI.
+- `TOTK_DSU_SLOT=0` selects a zero-based slot, `0` through `3` (default `0`).
+- Buttons and sticks follow the existing controller layout and foreground/background input policy.
+- DSU replaces native controller **motion** only after a valid six-axis sample
+  arrives, keeping the sensors separate. Opening a socket or receiving buttons
+  alone does not take motion over. Empty sensor payloads and zero sensor timestamps
+  do not count as motion. A missing server leaves native motion available.
+  Native controller rumble stays on its existing path; DSU rumble extensions
+  are not implemented.
+- Both the game's own motion setting and the port's gyro setting must be on.
+  Existing `TOTK_GYRO_AXES`, dead-zone and bias settings apply. Server timestamp
+  intervals are mapped to the local monotonic clock; the server may run on another
+  machine and need not share the game's uptime or wall clock.
+- Sensor silence returns motion to the native controller after 200 ms; a fresh
+  DSU sensor sample takes over again. Missing controller packets release
+  its input after 500 ms. Disconnects and server/device restarts reset the source.
+  No packets from another server endpoint or unselected slot are used.
+
+DSU is unauthenticated UDP. Prefer a local server or a trusted LAN. The receiver
+opens no public listener and sends registration only to the configured server.
+This support is macOS-only; iPhone/iPad keep their existing input paths. Protocol
+and receiver checks: `python -m unittest discover -s tests -p test_dsu.py -v`.
+
 ## Screenshots
 
-The controller's capture button saves a picture of the game's own frame: the square button below the D-pad on a Nintendo controller (read from the controller's HID reports; the Home button stays macOS's own), and macOS's Share button on a DualSense, a DualShock 4 or an Xbox controller. One press, one picture. The keyboard's **P** does the same, and so does holding a DualSense or DualShock 4's **touchpad** for 3 seconds (one picture per hold; the touchpad keeps anything else you gave it). Both are the **Key bindings** page's last row, *Screenshot*: change the keys like any action, and pick another controller button for the 3-second hold, or none (kept in `controller-screenshot.txt` next to `controls.txt`: a button's `controls.txt` name or `none`; the touchpad without the file). The **Screenshots** page of the settings panel has a **Take screenshot** button too (A on a controller), which saves the game picture without the panel, which stays open. macOS keeps a Share button for its own screenshot gesture until a game asks otherwise; the game asks, so the button reaches it -- but a shortcut you bound to the button yourself (System Settings › Game Center) keeps it, and then the button takes no picture. The picture is the game picture: the boot screen's text, the FPS box and the settings panel are not in it.
+The controller's capture button saves a picture of the game's own frame: the square button below the D-pad on a Nintendo controller (read from the controller's HID reports; the Home button stays macOS's own), and macOS's Share button on a DualSense, a DualShock 4 or an Xbox controller. One press, one picture. The keyboard's **P** does the same, and so does holding a DualSense or DualShock 4's **touchpad** for 3 seconds (one picture per hold; the touchpad keeps anything else you gave it). Both are the **Key bindings** page's last row, *Screenshot*: change the keys like any action, and pick another controller button for the 3-second hold, or none (kept in `controller-screenshot.txt` next to `controls.txt`: a button's `controls.txt` name or `none`; the touchpad without the file). The **Screenshots** page of the settings panel has a **Take screenshot** button too (A on a controller), which saves the game picture without the panel, which stays open. macOS keeps a Share button for its own screenshot gesture until a game asks otherwise; the game asks, so the button reaches it -- but a shortcut you bound to the button yourself (System Settings › Game Center) keeps it, and then the button takes no picture. The picture is the game's own frame, at the game's render resolution and without the letterbox bars: the boot screen's text, the FPS box and the settings panel are not in it.
 
 - **iPhone and iPad:** the picture is saved to the system photo library, in the album **Tears of the Kingdom** (or **Breath of the Wild**). Photos asks once for permission to add pictures; refusing it saves nothing, and the note says so.
 - **Desktop (macOS, Windows, Linux):** the picture is saved to a folder, the Desktop unless you choose another one. The **Input** page's last row, **Screenshot folder**, shows the chosen folder as fixed text, and its **Change Folder…** button opens the system folder chooser; the folder is checked as you pick it (read-only disks and other accounts' folders are refused there, with the reason), and the choice is kept in `screenshot-dir.txt` next to `controls.txt`. A launch's `TOTK_SCREENSHOT_DIR` still decides first; a folder picked in the panel replaces it for that launch too.

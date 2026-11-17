@@ -6,6 +6,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 BUILD_APP = REPO / 'build_app.py'
 UPDATE_RUNTIME = REPO / 'update_runtime.py'
+SHADER_UPDATE = REPO / 'shader_update.py'
 
 _module = None
 
@@ -27,6 +28,9 @@ GAMES = {
     'oot': 'Ocarina of Time',
     'dkb': 'Donkey Kong Bananza',
     'pkp': 'Pokémon Pokopia',
+    'ss': 'The Legend of Zelda: Skyward Sword HD',
+    'dread': 'Metroid Dread',
+    'worldend': 'Worldend Syndrome',
 }
 OOT_TITLE = '0400486024DEC000'   # build_app.main_ns2
 
@@ -40,4 +44,10 @@ def game_of_title(title):
     if title in b.NS2:
         return b.NS2[title]['version']
     application, _ = b.title_kind(title)
+    if application == '010093801237C000':
+        return 'dread'
+    if application == '010048900CF64000':
+        return 'worldend'
+    if application == '01002DA013484000':
+        return 'ss'
     return b.TITLES.get(application)

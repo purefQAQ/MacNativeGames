@@ -115,8 +115,8 @@ static NSArray<NSArray *> *contrib_tab_columns(void) {
  scroll.documentView=table;[self addSubview:scroll];self.table=table;
  NSTextField *status=contrib_tab_label(@"",12,0.7,NSTextAlignmentCenter);status.frame=NSMakeRect(20,NSMidY(scroll.frame)-10,W-40,20);[self addSubview:status];self.status=status;
  /* what is sent, at the bottom */
- NSTextField *note=contrib_tab_label(settings_text("只发送着色器和管线的标识、游戏和 App 版本、设备型号和系统版本号，以及一个随机编号，不含游戏内容、存档或个人信息。",
-  "Only shader and pipeline identifiers, the game and app versions, the device model and system version, and a random id are sent: no game data, saves or personal information."),
+ NSTextField *note=contrib_tab_label(settings_text("只发送着色器和管线的标识、游戏和 App 版本、设备型号和系统版本号，以及一个随机编号和排行榜用的随机编号（贡献榜上显示你的昵称），不含游戏内容、存档或个人信息。",
+  "Only shader and pipeline identifiers, the game and app versions, the device model and system version, and a random id plus the board's (so the contributors show your nickname) are sent: no game data, saves or personal information."),
   10.5,0.6,NSTextAlignmentCenter);
  note.lineBreakMode=NSLineBreakByWordWrapping;note.maximumNumberOfLines=2;note.frame=NSMakeRect(30,8,W-60,noteH);[self addSubview:note];self.note=note;
  [self refresh];
@@ -137,7 +137,9 @@ static NSArray<NSArray *> *contrib_tab_columns(void) {
  NSString *me=contrib_tab_pseudonym(self.path);   /* the first upload makes the id */
  if(!(me==self.me||[me isEqualToString:self.me])){self.me=me;[self.table reloadData];}
  double now=CACurrentMediaTime();
- if(!self.fetching&&(!self.fetchedAt||now-self.fetchedAt>CONTRIB_TAB_REFETCH_S))[self fetch];
+ /* Only a page on screen reads the site: the panel is made again at every opening (settings_panel_replace), and a page
+    made then and never shown read it each time (2026-11-15: GET /v1/board and /v1/stats were a third of the site's requests). */
+ if(self.window&&!self.hiddenOrHasHiddenAncestor&&!self.fetching&&(!self.fetchedAt||now-self.fetchedAt>CONTRIB_TAB_REFETCH_S))[self fetch];
 }
 -(void)fetch{
  if(!contrib_tab_root()){self.status.stringValue=settings_text("这次运行不连接网站","This run does not reach the site");return;}
@@ -168,7 +170,7 @@ static NSArray<NSArray *> *contrib_tab_columns(void) {
 -(NSInteger)numberOfRowsInTableView:(NSTableView *)t{(void)t;return (NSInteger)self.players.count;}
 -(NSString *)cellText:(NSDictionary *)p column:(NSString *)c row:(NSInteger)row{
  if([c isEqualToString:@"rank"])return [NSString stringWithFormat:@"%ld",(long)row+1];
- if([c isEqualToString:@"player"])return p[@"player"];
+ if([c isEqualToString:@"player"])return [p[@"name"] isKindOfClass:NSString.class]?p[@"name"]:p[@"player"];   /* the nickname, else the pseudonym */
  return [p[c] isKindOfClass:NSNumber.class]?contrib_tab_number([p[c] unsignedIntegerValue]):@"–";
 }
 -(NSView *)tableView:(NSTableView *)t viewForTableColumn:(NSTableColumn *)col row:(NSInteger)row{
@@ -178,7 +180,8 @@ static NSArray<NSArray *> *contrib_tab_columns(void) {
  cell.stringValue=[self cellText:p column:col.identifier row:row];
  cell.alignment=col.headerCell.alignment;
  cell.font=me?[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightBold]:[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
- if([col.identifier isEqualToString:@"player"])cell.font=[NSFont monospacedSystemFontOfSize:12 weight:me?NSFontWeightBold:NSFontWeightRegular];
+ if([col.identifier isEqualToString:@"player"]&&![p[@"nick"] boolValue])cell.font=[NSFont monospacedSystemFontOfSize:12 weight:me?NSFontWeightBold:NSFontWeightRegular];
+ if([col.identifier isEqualToString:@"player"])cell.toolTip=cell.stringValue;   /* a long nickname whole */
  cell.textColor=me?NSColor.systemGreenColor:[NSColor colorWithCalibratedWhite:0.92 alpha:1];
  return cell;
 }

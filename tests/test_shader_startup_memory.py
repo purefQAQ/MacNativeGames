@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import platform
 import subprocess
@@ -20,9 +21,12 @@ class ShaderStartupMemory(unittest.TestCase):
         body = text[begin:text.index('\n/* PR #84', begin)]
         probe = r'''
 #import "totk_shader_seed.h"
+#include "totk_seed_image.h"
 #include <malloc/malloc.h>
 static NSString *g_dir, *g_seed_dir;
 static NSSet *g_seed_names;
+static seed_image g_seed_img;
+static NSString *g_seed_prefix;
 static BOOL g_seed_all_default;
 static void (*runtime_boot_status)(const char *, const char *);
 static NSString *root_dir(void) { return @"unused"; }
@@ -72,7 +76,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
                 for name, data in payloads.items():
                     (source/name).write_bytes(data)
                     files[name] = hashlib.sha256(data).hexdigest()
-            chain = (NVN/'dmsh_chain.h').read_text().split('#define DMSH_CHAIN "')[1].split('"')[0]
+            chain = re.search(r'#define DMSH_CHAIN "([^"]+)"\s*/\* game: totk\b', (NVN/'dmsh_chain.h').read_text())[1]
             (source/'seed-manifest.json').write_text(json.dumps(dict(schema=1, chain=chain,
                 shaders=2048, all_default=True, files=files)))
             path = root/'probe.m'
