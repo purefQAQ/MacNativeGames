@@ -32,6 +32,7 @@ final class Model: ObservableObject {
     @Published var installed: [InstalledReport.App] = []
     @Published var installedLoaded = false   // the first scan finished: until then no game is shown as missing
     @Published var installedError: String?   // why the last scan failed (the home page shows it)
+    @Published var newerLauncher: (version: String, url: URL)?   // a newer MNG Launcher release (the version label turns blue)
     @Published var updating: String?     // the installed app being updated (its progress shows in its list)
     /// A job is running now. `updating` names the app the last job was for and stays after it ends (its card keeps the
     /// result and the log), so it never means "busy": a reporter (2026-11-17) found Start grey after a `mng.py build`
@@ -135,7 +136,25 @@ final class Model: ObservableObject {
             installedError = error.localizedDescription   // the games of the last look stay; the page says why this failed
         }
         installedLoaded = true
+        newerLauncher = Self.newerLauncher(than: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
     }
+
+    /// The newest MNG Launcher release the home page's read of the release list found (source_updates.check keeps it in
+    /// update-check.json), when it is newer than this one. Only a release has updates: a build from a checkout says nothing.
+    static func newerLauncher(than own: String) -> (version: String, url: URL)? {
+        guard Paths.isRelease,
+              let data = try? Data(contentsOf: Paths.support.appendingPathComponent("sources/update-check.json")),
+              let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let found = state["launcher"] as? [String: Any], let version = found["version"] as? String,
+              let url = URL(string: found["url"] as? String ?? ""), url.scheme == "https",
+              launcherHosts.contains(url.host ?? ""),
+              version.compare(own, options: .numeric) == .orderedDescending else { return nil }
+        return (version, url)
+    }
+
+    /// Where the label's click may go (source_updates.LAUNCHER_HOSTS, user 2026-11-18 "直接下载 DMG"): the disk image on
+    /// GitHub, as the website's Download button links it, or the website; any other address opens nothing.
+    static let launcherHosts: Set<String> = ["github.com", "mac-native-games.com", "www.mac-native-games.com"]
 
     private func save() {
         defaults.set(location, forKey: "location")
