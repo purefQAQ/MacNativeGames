@@ -43,8 +43,17 @@ final class Model: ObservableObject {
     @Published var quickStart = false    // 快速启动: build with only the title's shaders (Model.quickGames)
     /// The log of the job that failed last, which the terminal page's AI is asked about.
     var failureLog: String? { failure.flatMap { $0.step_log ?? $0.log } }
-    @Published var outputDir: String { didSet { save() } }
-    @Published var workRoot: String { didSet { save(); Task { await runChecks() } } }
+    /// Step 3's place, chosen by the player, no default (user 2026-11-17: "让用户 自己选择位置 不要有默认位置，用户选一个
+    /// 位置 自动生成app目录和build目录 然后打包"): a new app goes into <location>/app, its build's work files into
+    /// <location>/build/<game>; both are made when the build starts. Empty until chosen, and a new app is not built then.
+    /// An installed app is updated where it is, with the work folder it records (build_app.default_work), as before.
+    @Published var location: String { didSet { save(); Task { await runChecks() } } }
+    var outputDir: String { location.isEmpty ? "" : (location as NSString).appendingPathComponent("app") }
+    var workRoot: String { location.isEmpty ? "" : (location as NSString).appendingPathComponent("build") }
+    /// The installed app of the current plan's game, which a build updates in place.
+    var installedAppForPlan: String? { plan?.game.flatMap { g in installed.first(where: { $0.game == g })?.app } }
+    /// A new app would be made and no location is chosen yet.
+    var needsLocation: Bool { location.isEmpty && installedAppForPlan == nil }
 
     private var job: Job?
     // A build or update started elsewhere (tools/mng.py in a terminal, an AI): followed through tools/builder_jobs/shared.py
@@ -59,12 +68,8 @@ final class Model: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        outputDir = defaults.string(forKey: "outputDir") ?? home + "/Applications"
-        // Empty: the one folder rule (build_app.default_work, MacNativeGames-work beside the apps folder). The window's
-        // first default (Application Support/…/Builder/work) counts as empty, so its apps keep the folder they record.
-        let saved = defaults.string(forKey: "workRoot") ?? ""
-        workRoot = saved == Paths.support.appendingPathComponent("work").path ? "" : saved
+        // No default: the old apps folder (~/Applications) and work folder settings are not taken over as a location.
+        location = defaults.string(forKey: "location") ?? ""
         paths = defaults.stringArray(forKey: "paths") ?? []
         keysPath = defaults.string(forKey: "keys")
         NotificationCenter.default.addObserver(forName: .mngOpenFiles, object: nil, queue: .main) { [weak self] note in
@@ -87,7 +92,7 @@ final class Model: ObservableObject {
         if let k = keys.last { keysPath = k.path }
         let rest = urls.filter { $0.pathExtension.lowercased() != "keys" }
         if !rest.isEmpty { paths = rest.map { $0.path } }
-        page = "build"   // files given to the app (open -a, the Dock): the steps they fill in
+        openBuild()   // files given to the app (open -a, the Dock): the steps they fill in
         save()
         Task { await classify() }
     }
@@ -99,6 +104,9 @@ final class Model: ObservableObject {
         "totk": ["settings", "mods", "controls", "storage", "saves"],
         "botw": ["settings", "mods", "controls", "storage", "saves"],
         "oot": ["controls", "storage", "saves"],
+        "acnh": ["controls", "storage", "saves"],   // its settings are the game's own panel (key 1)
+        "eow": ["controls", "storage", "saves"],   // its settings are the game's own panel (key 1)
+        "odyssey": ["controls", "storage", "saves"],
     ]
     static func pages(_ game: String?) -> [String] { game.flatMap { gamePages[$0] } ?? [] }
     /// The installed apps the pages besides building serve.
@@ -117,7 +125,8 @@ final class Model: ObservableObject {
 
     func loadInstalled() async {
         do {
-            let data = try await Job.collect(["apps", "--apps-dir", outputDir])
+            // the installed games are found by bundle ID (tools/builder_jobs/installed.py); the chosen app folder is looked in too
+            let data = try await Job.collect(["apps"] + (outputDir.isEmpty ? [] : ["--apps-dir", outputDir]))
             installed = try JSONDecoder().decode(InstalledReport.self, from: data).apps
             installedError = nil
             try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
@@ -129,8 +138,7 @@ final class Model: ObservableObject {
     }
 
     private func save() {
-        defaults.set(outputDir, forKey: "outputDir")
-        defaults.set(workRoot, forKey: "workRoot")
+        defaults.set(location, forKey: "location")
         defaults.set(paths, forKey: "paths")
         defaults.set(keysPath, forKey: "keys")
     }
@@ -138,13 +146,15 @@ final class Model: ObservableObject {
     var plan: ClassifyReport.Plan? { report?.plan }
     var blocks: [String] {
         (plan?.blocks ?? []) + checks.filter { !$0.ok && $0.id != "disk" }.map { $0.text }
+            + (plan?.game != nil && needsLocation ? [T.locationNeeded] : [])
     }
     var canBuild: Bool { phase != .building && phase != .cancelling && plan?.game != nil && blocks.isEmpty }
 
     /// The app a build of the current plan writes, when it is already there.
     var existingApp: String? {
         guard let name = plan?.app_name else { return nil }
-        if let game = plan?.game, let app = installed.first(where: { $0.game == game })?.app { return app }
+        if let app = installedAppForPlan { return app }
+        guard !outputDir.isEmpty else { return nil }
         let path = (outputDir as NSString).appendingPathComponent(name + ".app")
         return FileManager.default.fileExists(atPath: path) ? path : nil
     }
@@ -157,7 +167,18 @@ final class Model: ObservableObject {
         Task { await classify() }
     }
 
+    /// Choose Again: these files in place of the ones chosen before (the keys stay).
+    func replace(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        paths = urls.map { $0.path }; report = nil; classifyError = nil
+        save()
+        Task { await classify() }
+    }
+
+    /// The files go; the keys stay, also a prod.keys that came in among the files (the plan found it there), which
+    /// becomes step 2's keys (2026-11-17: an empty case's Build page lost the keys chosen with Tears of the Kingdom).
     func clear() {
+        if keysPath == nil, let found = plan?.keys { keysPath = found }
         paths = []; report = nil; classifyError = nil; save()
     }
 
@@ -170,9 +191,39 @@ final class Model: ObservableObject {
 
     /// Step 1 is done: the base game was found (a game card without a title ID in its name is told by the keys of
     /// step 2). Step 2 is done: the game needs no keys, or the keys open it.
-    var gameReady: Bool { plan?.base != nil && (plan?.blocks ?? []).allSatisfy { (plan?.keys_problems ?? []).contains($0) } }
+    var gameReady: Bool {
+        plan?.base != nil && (plan?.blocks ?? []).allSatisfy { (plan?.keys_problems ?? []).contains($0) || toolBlocks.contains($0) }
+    }
     var keysReady: Bool { plan.map { !$0.needs_keys || ($0.keys != nil && $0.keys_problems.isEmpty) } ?? false }
     var macReady: Bool { checks.allSatisfy { $0.ok || $0.id == "disk" } && !checks.isEmpty }
+    /// The plan's blocks about this Mac's tools for this game (Ocarina of Time's Metal compiler; the command line tools
+    /// of a game the release's prebuilt programs do not cover): shown on page 3.
+    var toolBlocks: [String] { plan?.tool_blocks ?? [] }
+    func toolNeed(_ i: Int) -> String { (plan?.tool_needs ?? []).indices.contains(i) ? plan!.tool_needs![i] : "metal" }
+    /// Apple's installer of the command line tools; the plan is read again when it ends.
+    func installCommandLineTools() { run("/usr/bin/xcode-select", ["--install"]) }
+
+    /// The Build page's three pages (user 2026-11-17: "每个步骤 一个页面"): 1 this Mac, 2 the files and keys, 3 the build.
+    @Published var buildStep = 1
+    /// A page opens when the ones before it are done; a running build keeps page 3.
+    func canOpen(_ step: Int) -> Bool {
+        if jobRunning { return step == 3 }
+        return step == 1 || (macReady && (step == 2 || (gameReady && keysReady)))
+    }
+    /// The Build page for one game, from its case or its card's full update (user 2026-11-17: "点击空盒子 安装的时候 应该过去的
+    /// 信息 清空"): the files chosen before go unless they are this game's; the keys stay (one for every game). A running
+    /// build keeps its files.
+    func buildGame(_ game: String) {
+        if !jobRunning, plan?.game != game { clear() }
+        buildFor = game
+        openBuild()
+    }
+
+    /// The page the Build page opens on: this Mac's checks only when something is missing.
+    func openBuild() {
+        buildStep = jobRunning ? 3 : (macReady ? 2 : 1)
+        page = "build"
+    }
 
     func classify() async {
         guard !paths.isEmpty else { report = nil; return }
@@ -229,13 +280,16 @@ final class Model: ObservableObject {
                            quick: quick ? true : nil))
     }
     /// The games a build can make quick: only the title's shaders, the rest translated at first use (user 2026-11-13).
-    static let quickGames: Set<String> = ["oot"]
+    /// None in the players' download (user 2026-11-17: "launcher 里 用户版本 去掉 快速启动，包括 打包安装的 快速启动"): the
+    /// Build page's switch and the card's button both read this, so neither shows there and no build asks for it. A
+    /// Launcher made from a checkout keeps it for development and tests (CLAUDE.md: tests start quick), as tools/mng.py does.
+    static var quickGames: Set<String> { Paths.isRelease ? [] : ["oot"] }
 
     /// 快速启动 of an installed app (its card; user 2026-11-15: after the game's pages, one function with the Build page's switch):
     /// the same quick request, so the app is made again with only the title's shaders, also when a new translator would
     /// otherwise need the full build. 补全着色器 on its card makes it full later.
     func quickStart(_ app: InstalledReport.App) {
-        guard phase != .building && phase != .cancelling else { return }
+        guard phase != .building && phase != .cancelling, Model.quickGames.contains(app.game ?? "") else { return }
         updating = app.app
         start(BuildRequest(update: app.app, quick: true))
     }
@@ -263,7 +317,10 @@ final class Model: ObservableObject {
         startedHere = true
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("mng-build-request.json")
         do {
-            try FileManager.default.createDirectory(atPath: outputDir, withIntermediateDirectories: true)
+            // the chosen location's app and build folders (an update of an installed app has none and needs none)
+            for folder in [outputDir, workRoot] where !folder.isEmpty {
+                try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+            }
             try JSONEncoder().encode(request).write(to: file)
         } catch {
             failure = nil; lines = [error.localizedDescription]; phase = .failed; return
@@ -364,7 +421,9 @@ final class Model: ObservableObject {
 
     private func ended(_ code: Int32) {
         job = nil
-        if phase == .building || phase == .cancelling {   // the job ended without its 'done' line
+        // The job ended without its 'done' line, which build_job.py always prints: something went wrong, so the game is
+        // not started on a guess (after PR #2246, which started it here when the exit code was 0).
+        if phase == .building || phase == .cancelling {
             phase = code == 0 ? .done : .failed
         }
         Task { await loadInstalled() }   // an app was made or updated: what it needs now

@@ -47,7 +47,7 @@ Ocarina of Time and Pokopia package as a Mac app with `build_app.py`. Not yet: i
 | The Legend of Zelda: Tears of the Kingdom | 1.0.0, 1.2.1, 1.4.3 | Mac (up to native 4K on 1.2.1 and 1.4.3; 5K by default on 32 GB-plus Macs with 1.4.3), iPhone, iPad; Apple Vision Pro (windowed, early) | Supported | [`games/totk`](docs/install.md) ([Vision Pro](docs/install.md#apple-vision-pro)) |
 | The Legend of Zelda: Breath of the Wild | 1.6.0, 1.9.0 | Mac (up to native 4K); 1.6.0 also on iPhone and iPad | Supported | [`games/totk`](docs/install.md#breath-of-the-wild) (shared runtime), list in `games/botw` |
 | Super Smash Bros. Ultimate | 13.0.2, 13.0.5 | Mac | Community port | [`games/ssbu`](games/ssbu/README.md) |
-| Super Mario Odyssey | 1.3.0, 1.4.1 | Mac | Community port, early | [`games/odyssey`](games/odyssey/README.md) |
+| Super Mario Odyssey | 1.3.0, 1.4.1 | Mac | Community port, early; built from MNG Launcher | [`games/odyssey`](games/odyssey/README.md) |
 | Bayonetta 3 | 1.2.0 | Mac | Community port, work in progress | [`games/by3`](games/by3/README.md) |
 | Super Mario Bros. Wonder | 1.0.0, 1.2.1 | Mac | Community port, early | [`games/wonder`](games/wonder/README.md) |
 | Pokémon Legends: Arceus | 1.1.1 | Mac | Community port, early | [`games/pla`](games/pla/README.md) |
@@ -57,8 +57,8 @@ Ocarina of Time and Pokopia package as a Mac app with `build_app.py`. Not yet: i
 | Mario vs. Donkey Kong | 1.0.1 | Mac | Community port, early | [`games/mvdk`](games/mvdk/README.md) |
 | Metroid Dread | 2.1.0 (base + update) | Mac (validated); iPhone / iPad scripts updated, not yet built or validated on 2.1.0 | Community port, early | [`games/dread`](games/dread/README.md) |
 | Unicorn Overlord (Asian release) | 1.05 | Mac | Community port, early; DLC optional | [`games/unicorn`](games/unicorn/README.md) |
-| The Legend of Zelda: Echoes of Wisdom | 1.1.0 | Mac | Community port, early | [`games/eow`](games/eow/README.md) |
-| Animal Crossing: New Horizons | 1.2.1; 3.0.1 (experimental) | Mac | Community port | [`games/acnh`](games/acnh/README.md) |
+| The Legend of Zelda: Echoes of Wisdom | 1.1.0 | Mac | Community port, early; an app, built from MNG Launcher | [`games/eow`](games/eow/README.md) |
+| Animal Crossing: New Horizons | 1.2.1; 3.0.1, 3.0.3 (experimental) | Mac | Community port; 3.0.3 builds from MNG Launcher, 60 FPS, 120 FPS on a 120 Hz screen | [`games/acnh`](games/acnh/README.md) |
 | Octopath Traveler 0 | 1.0.3, 1.0.4, 1.0.5 | Mac | Community port, work in progress | [`games/ot0`](games/ot0/README.md) |
 | Hyrule Warriors: Age of Calamity | 1.3.0, 1.4.1 | Mac | Community port, experimental | [`games/aoc`](games/aoc/README.md) |
 | Mario Kart 8 Deluxe | 4.0.1 | Mac | Community port, early | [`games/mk8d`](games/mk8d/README.md) |
@@ -136,6 +136,7 @@ Only shader and pipeline identifiers, the game and app versions, the device mode
 ## What's new
 
 - **2026-11-14: WORLDEND SYNDROME 1.0.0 on Mac, experimental.** Built from your own base files; title through ADV, saves and the first loop were played ([games/worldend](games/worldend/README.md)).
+- **2026-11-13: experimental TMNT Mac source port.** Private-input build tools and host source are available under [`games/tmnt`](games/tmnt/README.md); complete playability and iOS are not validated.
 - **2026-11-11: Rankings, an anonymous frame-rate board (Tears of the Kingdom, Breath of the Wild, Ocarina of Time, Mac).**
   A settings tab of its own (key 1) shows the latest board, one group per frame lock and interpolation setting. **Join the
   board** is off by default and never asked; once on, the session is kept on your Mac every 5 minutes and sent at start and
@@ -246,7 +247,7 @@ Switch 2 游戏在《王国之泪》同一套运行时上运行：它们的 Ampe
 | 塞尔达传说 王国之泪 | 1.0.0、1.2.1、1.4.3 | Mac（1.2.1 和 1.4.3 最高原生 4K，1.4.3 在 32 GB 及以上内存的 Mac 默认带 5K）、iPhone、iPad；Apple Vision Pro（窗口内游玩，早期） | 正式支持 | [`games/totk`](docs/install.zh-CN.md)（[Vision Pro](docs/install.zh-CN.md#apple-vision-pro)） |
 | 塞尔达传说 旷野之息 | 1.6.0、1.9.0 | Mac（最高原生 4K）；1.6.0 也能在 iPhone 和 iPad 上玩 | 正式支持 | [`games/totk`](docs/install.zh-CN.md#旷野之息)（共用运行时），清单在 `games/botw` |
 | 任天堂明星大乱斗 特别版 | 13.0.2、13.0.5 | Mac | 社区移植 | [`games/ssbu`](games/ssbu/README.md) |
-| 超级马力欧 奥德赛 | 1.3.0、1.4.1 | Mac | 社区移植，早期 | [`games/odyssey`](games/odyssey/README.md) |
+| 超级马力欧 奥德赛 | 1.3.0、1.4.1 | Mac | 社区移植，早期；可在 MNG Launcher 里打包 | [`games/odyssey`](games/odyssey/README.md) |
 | 猎天使魔女 3 | 1.2.0 | Mac | 社区移植，开发中 | [`games/by3`](games/by3/README.md) |
 | 超级马力欧兄弟 惊奇 | 1.0.0、1.2.1 | Mac | 社区移植，早期 | [`games/wonder`](games/wonder/README.md) |
 | 宝可梦传说 阿尔宙斯 | 1.1.1 | Mac | 社区移植，早期 | [`games/pla`](games/pla/README.md) |
@@ -256,8 +257,8 @@ Switch 2 游戏在《王国之泪》同一套运行时上运行：它们的 Ampe
 | 马力欧 vs. 大金刚 | 1.0.1 | Mac | 社区移植，早期 | [`games/mvdk`](games/mvdk/README.md) |
 | 密特罗德 生存恐惧 | 2.1.0（本体 + 更新） | Mac（已验证）；iPhone / iPad 脚本已更新，尚未在 2.1.0 上构建或验证 | 社区移植，早期 | [`games/dread`](games/dread/README.md) |
 | 圣兽之王（亚洲版） | 1.05 | Mac | 社区移植，早期；DLC 可选 | [`games/unicorn`](games/unicorn/README.md) |
-| 塞尔达传说 智慧的再现 | 1.1.0 | Mac | 社区移植，早期 | [`games/eow`](games/eow/README.md) |
-| 集合啦！动物森友会 | 1.2.1；3.0.1（实验性） | Mac | 社区移植 | [`games/acnh`](games/acnh/README.md) |
+| 塞尔达传说 智慧的再现 | 1.1.0 | Mac | 社区移植，早期；有 App，可在 MNG Launcher 里打包 | [`games/eow`](games/eow/README.md) |
+| 集合啦！动物森友会 | 1.2.1；3.0.1、3.0.3（实验性） | Mac | 社区移植；3.0.3 可在 MNG Launcher 里打包，60 帧，120 Hz 屏幕上 120 帧 | [`games/acnh`](games/acnh/README.md) |
 | 歧路旅人0 | 1.0.3、1.0.4、1.0.5 | Mac | 社区移植，开发中 | [`games/ot0`](games/ot0/README.md) |
 | 塞尔达无双 灾厄启示录 | 1.3.0、1.4.1 | Mac | 社区移植，实验 | [`games/aoc`](games/aoc/README.md) |
 | 马力欧卡丁车8 豪华版 | 4.0.1 | Mac | 社区移植，早期 | [`games/mk8d`](games/mk8d/README.md) |

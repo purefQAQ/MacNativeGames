@@ -86,6 +86,10 @@ static void seed_mark_broken(NSString *name) {
     os_unfair_lock_unlock(&g_seed_broken_lock);
 }
 static BOOL g_seed_all_default;   // seed-manifest.json all_default: every shader has its default variant (contrib_wanted)
+/* The seed is the app's own, sealed by its signature (totk_shader_seed.h totk_seed_sealed): its Metal sources are whole, and
+   packaging compiled every one of them into its library (OOT 2026-11-17: libraries-manifest.json complete, failed.log
+   empty), so variant_lookup takes its variants without reading their source again. */
+static BOOL g_seed_sealed;
 static uint64_t g_translated;
 /* The bottom-left box (nvn_mtl.m shader_overlay_prepare): variants new to the cache this run, when the last one came,
    and the variants in the cache (counted once in the background, plus the new ones since). */
@@ -164,7 +168,7 @@ NSString *totk_rt_dir(void) {
             NSDictionary *seed = totk_seed_import(source, g_dir, &error);
             totk_seed_progress = NULL;
             if ([seed[@"overlay"] isKindOfClass:NSArray.class]) {
-                g_seed_dir = source; g_seed_names = [NSSet setWithArray:seed[@"overlay"]];
+                g_seed_dir = source; g_seed_names = [NSSet setWithArray:seed[@"overlay"]]; g_seed_sealed = [seed[@"sealed"] boolValue];
                 g_seed_prefix = [source stringByAppendingString:@"/"]; seed_image_open(&g_seed_img, source);
                 if (g_seed_img.parts) { uint64_t files = 0; for (int i = 0; i < g_seed_img.parts; i++) files += g_seed_img.p[i].count;
                     LOG("[shader-seed] 着色器文件在镜像里：%d 份，%llu 个文件（原地读取，不解包）", g_seed_img.parts, (unsigned long long)files); }
@@ -334,8 +338,23 @@ static NSData *seed_image_file(NSString *path) {
 }
 NSData *totk_rt_read(NSString *path) {
     if (!path) return nil;
-    NSData *d = seed_image_file(path);
-    return d ?: [NSData dataWithContentsOfFile:path];
+    /* TOTK_RT_READ_LOG=1 (diagnostic, default off; 2026-11-17 OOT: replays held the replay section 120-245 ms in an
+       open() under totk_rt_read on the external drive): reads over 20 ms, by file kind and source. */
+    static int slow_log = -1; if (slow_log < 0) { const char *e = getenv("TOTK_RT_READ_LOG"); slow_log = e && atoi(e) > 0; }
+    uint64_t t0 = slow_log ? clock_gettime_nsec_np(CLOCK_UPTIME_RAW) : 0;
+    NSData *d = seed_image_file(path); int from_image = d != nil;
+    if (!d) d = [NSData dataWithContentsOfFile:path];
+    if (slow_log) {
+        uint64_t ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0;
+        if (ns >= 20000000ull) {
+            NSString *name = path.lastPathComponent; NSRange us = [name rangeOfString:@"_" options:NSBackwardsSearch];
+            NSString *kind = [name hasSuffix:@".variants"] ? @".variants" : us.location != NSNotFound ? [name substringFromIndex:us.location] : name.pathExtension;
+            LOG("[rt-read] frame %llu %s %s %s: %.1f ms (%lu bytes)", (unsigned long long)dm_nvn_frame_count(), kind.UTF8String,
+                from_image ? "seed image" : g_seed_prefix && [path hasPrefix:g_seed_prefix] ? "seed file" : "cache file",
+                d ? "found" : "missing", ns / 1e6, (unsigned long)d.length);
+        }
+    }
+    return d;
 }
 int totk_rt_exists(NSString *path) {
     if (!path) return 0;
@@ -424,7 +443,11 @@ static NSString *variant_lookup(NSString *shader, NSDictionary *answers) {
         if (!totk_deps_match(v[@"deps"], answers)) continue;   // totk_shader_contrib.h: the contribution file's pruning picks so too
         NSString *found = v[@"variant"];
         if (!g_msl_checked) g_msl_checked = [NSMutableSet set];
-        BOOL checked = [g_msl_checked containsObject:found];
+        /* A sealed seed's variant (g_seed_sealed) is taken as it is: reading its whole Metal source into a string here, on the
+           replay's thread, was the first cause of replays held over 100 ms in the world (img-1, 2026-11-17: 9 of 53). */
+        NSString *msl_name = [found stringByAppendingString:@"_b.metal"];
+        BOOL checked = [g_msl_checked containsObject:found] ||
+            (g_seed_sealed && [g_seed_names containsObject:msl_name] && !seed_broken(msl_name));
         NSString *msl = checked ? nil :
             totk_rt_text(totk_rt_file([found stringByAppendingString:@"_b.metal"]));
         /* missing, empty (a translation cut short: 0 bytes, 2026-10-30) or previously un-compilable: translated again */
@@ -733,6 +756,11 @@ static NSDictionary *translate(rt_svc *svc, NSDictionary *rq, uint64_t started) 
     if (![refl isKindOfClass:[NSDictionary class]]) die("shader %s: reflection missing", variant.UTF8String);
 #if defined(GAME_OOT)
     if (!strcmp(stage, "ps")) refl = blend_zero_guard(variant, refl);
+    /* The SPIR-V is the translator's intermediate (Service.cs: spirv-cross makes _b.metal from it within the request);
+       nothing reads it afterwards (the seed takes .variants / _b.metal / _b.json, the runtime those and _b.metallib), and
+       at about 136 KB a shader it was half of each 9 GB translation folder (user 2026-11-17: "spv 一开始就不保留"). */
+    for (NSString *end in @[@".spv", @".reader.spv"])
+        unlink([totk_rt_dir() stringByAppendingFormat:@"/%@%@", variant, end].fileSystemRepresentation);
 #endif
     return refl;
 }

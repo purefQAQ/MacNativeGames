@@ -25,13 +25,28 @@ enum T {
     static let output = s("Apps go to", "App 放在")
     static let work = s("Work folders in", "工作目录放在")
     static let change = s("Change…", "更改…")
+    /// Step 3's place (user 2026-11-17: "让用户 自己选择位置 不要有默认位置 … 自动生成app目录和build目录").
+    static let location = s("Location", "位置")
+    static let chooseLocation = s("Choose a Location…", "选择位置…")
+    static let locationNone = s("Not chosen yet", "还没选")
+    static let locationHint = s("Choose a folder for this game. The app goes into its app folder, the build's work files into its build folder; both are made when the build starts.",
+                                "选一个文件夹放这个游戏：App 放进它里面的 app 文件夹，打包的中间文件放进 build 文件夹，开始打包时自动建好。")
+    static let locationNeeded = s("Step 3: choose a location first", "第三步：先选一个位置")
+    static func locationParts(_ app: String, _ work: String) -> String { zh ? "App：\(app)\n中间文件：\(work)" : "App: \(app)\nWork files: \(work)" }
+    static func updatesInPlace(_ app: String) -> String {
+        zh ? "这个游戏已经装在 \(app)，会原地更新，用它自己记录的工作目录；不用选位置。" : "This game is installed at \(app) and is updated where it is, with the work folder it records; no location needed."
+    }
+    /// The Launcher's version, bottom right of the window (user 2026-11-17: "launcher 右下角 显示 版本号").
+    static func version(_ v: String) -> String { "MNG Launcher \(v)" }
+    static func devVersion(_ commit: String) -> String { zh ? "MNG Launcher 开发版 · \(commit)" : "MNG Launcher development build · \(commit)" }
+    static func versionHelp(_ commit: String) -> String { zh ? "自带代码提交 \(commit)" : "Bundled code commit \(commit)" }
     static let thisMac = s("This Mac", "这台 Mac")
     static let fix = s("Fix", "修复")
     static let recheck = s("Check Again", "重新检查")
     static let blocked = s("Not ready", "还不能打包")
     static let ready = s("Ready to build", "可以打包")
     static let building = s("Building", "正在打包")
-    static let doneOK = s("Done. Starting the game…", "打包完成，正在启动游戏…")
+    static let doneOK = s("Done. The game was opened.", "打包完成，已打开游戏。")   // play() does not wait: no "…ing" left on the page
     static let failed = s("The build stopped", "打包停下了")
     static let cancelled = s("Cancelled. Build again to go on where it stopped.", "已停止。再按一次打包会从停下的地方接着做。")
     static let cancelling = s("Stopping…", "正在停止…")
@@ -67,6 +82,9 @@ enum T {
         return v.allSatisfy(\.isNumber) ? "v\(v)" : v
     }
     static let addGame = s("Add this game", "添加这个游戏")
+    // a case's back (scheme A, user 2026-11-17): a game not built yet, and the hint under every back
+    static let notBuiltYet = s("Not built yet. A build takes three steps:", "还没打包。打包分三步：")
+    static let turnBack = s("Click outside or press Esc to turn it back", "点盒子外面或按 Esc 翻回")
     static func addGameHelp(_ name: String) -> String { s("Build \(name) from your own files", "用你自己的文件打包\(name)") }
     static let anyGame = s("Any game", "不限游戏")
     static func buildingFor(_ name: String) -> String { s("Build \(name)", "打包\(name)") }
@@ -78,6 +96,9 @@ enum T {
         case "botw": return s("Zelda: Breath of the Wild", "塞尔达传说 旷野之息")
         case "dkb": return s("Donkey Kong Bananza", "大金刚 Bananza")
         case "pkp": return s("Pokémon Pokopia", "宝可梦 Pokopia")
+        case "acnh": return s("Animal Crossing: New Horizons", "集合啦！动物森友会")
+        case "eow": return s("Zelda: Echoes of Wisdom", "塞尔达传说 智慧的再现")
+        case "odyssey": return s("Super Mario Odyssey", "超级马力欧 奥德赛")
         default: return g
         }
     }
@@ -86,6 +107,9 @@ enum T {
         case "totk": return "Mac · iPhone · iPad · Vision Pro"
         case "botw": return "Mac · iPhone · iPad"
         case "oot": return "Switch 2 · Mac"
+        case "acnh": return s("Mac · experimental", "Mac · 实验性")
+        case "eow": return s("Mac · early", "Mac · 早期")
+        case "odyssey": return s("Mac · early", "Mac · 早期")
         default: return s("Switch 2 · Mac · early", "Switch 2 · Mac · 早期")
         }
     }
@@ -95,6 +119,9 @@ enum T {
         case "totk": return [Color(red: 0.20, green: 0.55, blue: 0.62), Color(red: 0.06, green: 0.20, blue: 0.30)]
         case "botw": return [Color(red: 0.35, green: 0.45, blue: 0.62), Color(red: 0.10, green: 0.14, blue: 0.24)]
         case "dkb": return [Color(red: 0.85, green: 0.42, blue: 0.12), Color(red: 0.40, green: 0.12, blue: 0.08)]
+        case "odyssey": return [Color(red: 0.86, green: 0.20, blue: 0.18), Color(red: 0.30, green: 0.06, blue: 0.10)]
+        case "eow": return [Color(red: 0.55, green: 0.42, blue: 0.78), Color(red: 0.16, green: 0.12, blue: 0.30)]
+        case "acnh": return [Color(red: 0.36, green: 0.72, blue: 0.62), Color(red: 0.10, green: 0.32, blue: 0.30)]
         default: return [Color(red: 0.45, green: 0.70, blue: 0.35), Color(red: 0.14, green: 0.32, blue: 0.16)]
         }
     }
@@ -103,6 +130,9 @@ enum T {
         case "totk": return s("Drop the base game (XCI or NSP) and the 1.4.3 update (NSP); an NSP base also needs your unpacked firmware folder.", "拖入游戏本体（XCI 或 NSP）和 1.4.3 更新（NSP）；本体是 NSP 时还要解开的固件文件夹。")
         case "botw": return s("Drop the 1.6.0 card image (XCI), or the base NSP with the 1.9.0 update and its DLC, and a firmware or shared-fonts folder.", "拖入 1.6.0 卡带（XCI），或本体 NSP 加 1.9.0 更新和 DLC，再加固件或系统字体文件夹。")
         case "oot": return s("Drop the Switch 2 dump folder (or the .nup package) and a shared-fonts folder.", "拖入 Switch 2 的游戏文件夹（或 .nup 包）和系统字体文件夹。")
+        case "odyssey": return s("Drop the game with update 1.3.0 or 1.4.1 (a combined XCI or NSP, or the base NSP and the update NSP), and your firmware or the shared-fonts folder of an earlier build.", "拖入带 1.3.0 或 1.4.1 更新的游戏（合并的 XCI 或 NSP，或本体 NSP 加更新 NSP），以及固件或以前打包留下的系统字体文件夹。")
+        case "eow": return s("Drop the base game (XCI or NSP), the 1.1.0 update (NSP), and your firmware or the shared-fonts folder of an earlier build.", "拖入游戏本体（XCI 或 NSP）、1.1.0 更新（NSP），以及固件或以前打包留下的系统字体文件夹。")
+        case "acnh": return s("Drop the base game (NSP), the 3.0.3 update (NSP), any of the three add-ons, and your firmware or the shared-fonts folder of an earlier build.", "拖入游戏本体（NSP）、3.0.3 更新（NSP）、需要的追加内容，以及固件或以前打包留下的系统字体文件夹。")
         default: return s("Drop the Switch 2 dump folder with its updates/ folder.", "拖入带 updates/ 文件夹的 Switch 2 游戏文件夹。")
         }
     }
@@ -129,7 +159,7 @@ enum T {
         default: return s("Full build", "完整打包")
         }
     }
-    static let updatedOK = s("Updated. Starting the game…", "更新完成，正在启动游戏…")
+    static let updatedOK = s("Updated. The game was opened.", "更新完成，已打开游戏。")
     static let shadersDone = s("Shaders and pipelines updated.", "着色器和管线更新完成。")
     static let checkShaders = s("Check shaders", "检查着色器")
     static let checkingShaders = s("Downloading the newest shader list…", "正在下载最新的着色器清单…")
@@ -167,6 +197,22 @@ enum T {
     }
 
     static func stepTitle(_ n: Int) -> String { zh ? "第\(["一", "二", "三"][n - 1])步" : "Step \(n)" }
+    // The build's three pages (user 2026-11-17: "第一步 检查 所有工具 … 第二步 选择 文件 包括key，第三部 打包。 每个步骤 一个页面")
+    static let page1 = s("Check this Mac", "检查这台 Mac")
+    static let page2 = s("Game files and keys", "游戏文件和密钥")
+    static let page3 = s("Build", "打包")
+    static let page1Hint = s("What a build needs on this Mac. A red line has a button or a command that fixes it.",
+                             "打包需要这台 Mac 具备的东西。红色的一行旁边有修复按钮或命令。")
+    static let checking = s("Checking this Mac…", "正在检查这台 Mac…")
+    static let next = s("Next", "下一步")
+    static let back = s("Back", "上一步")
+    static let gameFiles = s("Game files", "游戏文件")
+    static let chooseAgain = s("Choose Again…", "重新选择…")
+    static let keys = s("Keys", "密钥")
+    static let getXcode = s("Get Xcode", "获取 Xcode")
+    static let installCLT = s("Install Command Line Tools", "安装命令行工具")
+    static let copyCommand = s("Copy Command", "拷贝命令")
+    static let metalCommand = "xcodebuild -downloadComponent MetalToolchain"
     static let step1 = s("Choose the game", "选择游戏")
     static let step1Hint = s("Drop the game here, or choose it: an XCI or NSP with its update (a folder that holds them works too), or a Switch 2 dump folder. An NSP also needs your unpacked firmware folder. Nothing is copied.",
                              "把游戏拖到这里，或点“选择…”：XCI 或 NSP 和它的更新（放在一个文件夹里，直接选文件夹也行），或 Switch 2 的游戏文件夹。NSP 还要解开的固件文件夹。文件不会被复制。")
@@ -175,7 +221,7 @@ enum T {
     static let step2Hint = s("The prod.keys dumped from your own Switch. It is remembered for every game.",
                              "从你自己的 Switch 导出的 prod.keys。选一次，以后每个游戏都用它。")
     static let chooseKeys = s("Choose prod.keys…", "选择 prod.keys…")
-    static let noKeysNeeded = s("This game needs no keys: go on to step 3.", "这个游戏不需要密钥，直接做第三步。")
+    static let noKeysNeeded = s("This game needs no keys.", "这个游戏不需要密钥。")
     static let keysOK = s("These keys open the game.", "这份密钥能打开这个游戏。")
     static let step3 = s("Build and play", "打包并游玩")
     static let step3Hint = s("Builds the app (20–40 minutes the first time, much less after), signs it and starts the game.",

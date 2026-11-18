@@ -46,13 +46,19 @@ def same_version(plan, update_plan):
         return False
     if plan['game'] == 'oot':   # one version is built (131072), checked by the build itself
         return True
-    if plan['game'] == 'worldend':
+    if plan['game'] in ('worldend', 'tmnt'):
         return update_plan.get('version') == 'v0' and not plan.get('update')
     if plan['game'] == 'dread':
         expected = 327680 if update_plan.get('version') == 'v210' else 0 if update_plan.get('version') == 'v100' else None
         return expected is not None and (plan.get('update_version') if plan.get('update') else 0) == expected
     if plan['game'] == 'ss':
         return update_plan.get('version') == 'v65536' and plan.get('update_version') == 65536
+    if plan['game'] == 'odyssey':   # 1.3.0 and 1.4.1 build the same app (the same code and merged data)
+        return True
+    if plan['game'] == 'eow':   # one version is built (1.1.0)
+        return plan.get('update_version') == 196608
+    if plan['game'] == 'acnh':   # update_runtime.plan: 'v<update version>' of the app
+        return plan.get('update') is not None and update_plan.get('version') == f'v{plan.get("update_version")}'
     app_version = repo.build_app().VERSIONS.get(update_plan.get('version') or '', {}).get('version')
     dropped = plan.get('update_version') if plan.get('update') else 0
     return dropped is not None and app_version is not None and str(app_version) == str(dropped)
@@ -106,18 +112,18 @@ def command(request, python=sys.executable):
             return (repo.UPDATE_RUNTIME, [str(out)] + (['--seed'] if up['kind'] == 'fast' else []), Path(up['work']), out,
                     up['kind'], plan['game'])
     argv = [plan['base']]
-    if plan.get('keys') and plan['game'] in ('totk', 'botw', 'ss', 'dread', 'worldend'):
+    if plan.get('keys') and plan['game'] in ('totk', 'botw', 'ss', 'dread', 'worldend', 'tmnt', 'acnh', 'eow', 'odyssey'):
         argv += ['-k', plan['keys']]
     if plan.get('update'):
         argv += ['--update', plan['update']]
     for dlc in plan.get('dlc') or []:
         argv += ['--dlc', dlc]
-    if plan.get('firmware') and plan['game'] not in ('ss', 'worldend'):
+    if plan.get('firmware') and plan['game'] not in ('ss', 'worldend', 'tmnt'):
         argv += ['--firmware', plan['firmware']]
-    elif plan.get('fonts') and plan['game'] not in ('ss', 'worldend'):
+    elif plan.get('fonts') and plan['game'] not in ('ss', 'worldend', 'tmnt'):
         argv += ['--shared-fonts', plan['fonts']]
     argv += ['--work', str(work), '-o', str(out)]
-    script = repo.REPO/f'games/{plan["game"]}/build.py' if plan['game'] in ('ss', 'dread', 'worldend') else repo.BUILD_APP
+    script = repo.REPO/f'games/{plan["game"]}/build.py' if plan['game'] in ('ss', 'dread', 'worldend', 'tmnt', 'acnh', 'eow', 'odyssey') else repo.BUILD_APP
     return script, argv, work, out, 'full', plan['game']
 
 
